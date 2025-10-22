@@ -7,7 +7,11 @@ requires-python = ">=3.13"
 dependencies = [
     "pydantic>=2.12.3",
     "tomli-w>=1.2.0",
+    "typer>=0.20.0",
 ]
+
+[project.scripts]
+dotbak = "dotbak.cli:run"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 

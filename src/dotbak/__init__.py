@@ -1,5 +1,6 @@
 """Core package for the dotbak project."""
 
+from .cli import app, run
 from .config import Config, GroupConfig, Settings
 from .manager import DotbakError, DotbakManager
 from .manifest import Manifest
@@ -23,4 +24,6 @@ __all__ = [
     "StatusEntry",
     "StatusReport",
     "StatusState",
+    "app",
+    "run",
 ]
