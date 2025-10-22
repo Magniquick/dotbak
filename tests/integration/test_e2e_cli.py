@@ -76,3 +76,54 @@ def test_cli_detects_drift_and_restore(tmp_path: Path, fake_home: Path) -> None:
     assert restore_result.exit_code == 0
     assert config_file.is_file()
     assert config_file.read_text() == "hello world\n"
+
+
+def test_cli_symlink_integrity(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    sources = project / "sources"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+
+    files_group = sources / "files"
+    files_group.mkdir(parents=True)
+    sample_file = files_group / "notes.txt"
+    sample_file.write_text("dotbak keeps me safe\n")
+
+    nested_dir = sources / "configs"
+    subdir = nested_dir / "shell"
+    subdir.mkdir(parents=True)
+    (subdir / "zshrc").write_text("alias ll='ls -al'\n")
+
+    config_path = project / "dotbak.toml"
+    config_path.write_text(
+        f"""
+[groups.files]
+base = "{files_group}"
+entries = ["notes.txt"]
+
+[groups.configs]
+base = "{nested_dir}"
+entries = ["shell"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+    )
+
+    apply_result = runner.invoke(app, ["apply", "--config", str(config_path)])
+    assert apply_result.exit_code == 0
+
+    managed_file = managed / "files" / "notes.txt"
+    managed_dir = managed / "configs" / "shell"
+
+    assert sample_file.is_symlink()
+    assert sample_file.resolve(strict=True) == managed_file.resolve(strict=True)
+    assert subdir.is_symlink()
+    assert subdir.resolve(strict=True) == managed_dir.resolve(strict=True)
+
+    assert managed_file.read_text() == "dotbak keeps me safe\n"
+    assert (managed_dir / "zshrc").read_text() == "alias ll='ls -al'\n"
+
+    doctor_result = runner.invoke(app, ["doctor", "--config", str(config_path)])
+    assert doctor_result.exit_code == 0
