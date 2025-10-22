@@ -684,13 +684,8 @@ manifest_path = "{manifest_path}"
         return True
 
     monkeypatch.setattr("dotbak.manager.os.access", fake_access)
-    captured: list[str] = []
 
-    def fake_warn(message, **_kwargs):
-        captured.append(message)
-
-    monkeypatch.setattr("dotbak.manager.warnings.warn", fake_warn)
-
+    manager._warnings.clear()
     manager._ensure_writable(base_dir, create_missing=True)
 
-    assert captured
+    assert manager._warnings

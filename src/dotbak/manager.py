@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import warnings
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -43,10 +42,12 @@ class DotbakManager:
         self.config = config
         self.manifest = Manifest.load(config.settings.manifest_path)
         self.config.settings.managed_root.mkdir(parents=True, exist_ok=True)
+        self._warnings: list[str] = []
 
     def apply(self, groups: Iterable[str] | None = None, *, force: bool = False) -> list[ApplyResult]:
         selected = self._select_groups(groups)
         results: list[ApplyResult] = []
+        self._warnings.clear()
 
         for group in selected:
             for entry in group.entries:
@@ -90,10 +91,16 @@ class DotbakManager:
             for entry in group.entries:
                 managed_path = ManagedPath(group.name, entry)
                 source = group.source_path(entry)
+                before = len(self._warnings)
                 try:
                     self._ensure_writable(source, create_missing=False)
                 except DotbakError as exc:
                     issues.append((managed_path, str(exc)))
+                    continue
+                new_messages = self._warnings[before:]
+                if new_messages:
+                    issues.extend((managed_path, msg) for msg in new_messages)
+                    self._warnings = self._warnings[:before]
 
         return issues
 
@@ -118,6 +125,11 @@ class DotbakManager:
             self.manifest.save()
 
         return results
+
+    def pull_warnings(self) -> list[str]:
+        messages = list(self._warnings)
+        self._warnings.clear()
+        return messages
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -387,17 +399,6 @@ class DotbakManager:
                         if file_path.is_symlink():
                             target = Path(os.readlink(file_path))
                             target_abs = (file_path.parent / target).resolve(strict=False)
-                            target_writable = os.access(target_abs, os.W_OK)
-                            uid = getattr(file_path.lstat(), "st_uid", None)
-                            getuid = getattr(os, "getuid", None)
-                            user_uid = getuid() if callable(getuid) else None
-                            if not target_writable and uid is not None and user_uid is not None and uid == user_uid:
-                                self._warn_symlink_shadow(file_path, target_abs)
-                                continue
-                            if not target_writable:
-                                raise DotbakError(
-                                    f"Insufficient permissions to modify file '{file_path}'. Run with elevated privileges."
-                                )
                             self._warn_symlink_shadow(file_path, target_abs)
                             continue
                         raise DotbakError(
@@ -407,15 +408,6 @@ class DotbakManager:
                 if path.is_symlink():
                     target = Path(os.readlink(path))
                     target_abs = (path.parent / target).resolve(strict=False)
-                    target_writable = os.access(target_abs, os.W_OK)
-                    uid = getattr(path.lstat(), "st_uid", None)
-                    getuid = getattr(os, "getuid", None)
-                    user_uid = getuid() if callable(getuid) else None
-                    if not target_writable and uid is not None and user_uid is not None and uid == user_uid:
-                        self._warn_symlink_shadow(path, target_abs)
-                        return
-                    if not target_writable:
-                        raise DotbakError(f"Insufficient permissions to modify '{path}'. Run with elevated privileges.")
                     self._warn_symlink_shadow(path, target_abs)
                     return
                 raise DotbakError(f"Insufficient permissions to modify '{path}'. Run with elevated privileges.")
@@ -426,8 +418,4 @@ class DotbakManager:
                 )
 
     def _warn_symlink_shadow(self, path: Path, target: Path) -> None:
-        warnings.warn(
-            f"shadowing existing symlink '{path}' pointing to '{target}'. dotbak will manage a copy.",
-            category=UserWarning,
-            stacklevel=2,
-        )
+        self._warnings.append(f"shadowing existing symlink '{path}' pointing to '{target}'. dotbak will manage a copy.")

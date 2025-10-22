@@ -365,6 +365,8 @@ def apply(
         manager = _load_manager(config)
         results = manager.apply(group or None, force=force)
         _format_apply_results(results)
+        for message in manager.pull_warnings():
+            console.print(f"[yellow]Warning:[/yellow] {message}")
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
@@ -409,6 +411,8 @@ def restore(
         manager = _load_manager(config)
         results = manager.restore(group or None, forget=forget, force=force)
         _format_restore_results(results)
+        for message in manager.pull_warnings():
+            console.print(f"[yellow]Warning:[/yellow] {message}")
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
