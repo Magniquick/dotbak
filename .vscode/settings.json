@@ -1,0 +1,9 @@
+{
+    "files.exclude": {
+        ".pytest_cache": true,
+        ".python-version": true,
+        ".venv": true,
+        ".vscode": true,
+        "**/__pycache__": true
+    }
+}
