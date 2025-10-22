@@ -84,6 +84,7 @@ class DotbakManager:
         return StatusReport(entries=tuple(entries))
 
     def permission_issues(self, groups: Iterable[str] | None = None) -> list[tuple[ManagedPath, str]]:
+        self._warnings.clear()
         issues: list[tuple[ManagedPath, str]] = []
         selected = self._select_groups(groups)
 

@@ -77,6 +77,8 @@ class GroupConfig(BaseModel):
                 raise ConfigError(f"Group '{name}' entry '{candidate}' must not escape its base path")
             entries.append(candidate)
 
+        _validate_no_overlaps(name, entries)
+
         return cls(name=name, base_path=base_path, entries=tuple(entries))
 
     def destination_path(
@@ -171,3 +173,24 @@ def _resolve_config_path(path: Path | None) -> Path:
         path = candidate
 
     return path.resolve(strict=False)
+
+
+def _validate_no_overlaps(group: str, entries: list[Path]) -> None:
+    seen = set()
+    sorted_entries = sorted(entries, key=lambda p: (len(p.parts), p.as_posix()))
+    for entry in sorted_entries:
+        posix = entry.as_posix()
+        if posix in seen:
+            raise ConfigError(f"Group '{group}' defines duplicate entry '{entry}'")
+        seen.add(posix)
+
+    for idx, parent in enumerate(sorted_entries):
+        parent_parts = parent.parts
+        for child in sorted_entries[idx + 1 :]:
+            child_parts = child.parts
+            if len(child_parts) < len(parent_parts):
+                continue
+            if child_parts[: len(parent_parts)] == parent_parts:
+                raise ConfigError(
+                    f"Group '{group}' has overlapping entries '{parent}' and '{child}'. Remove one of them."
+                )

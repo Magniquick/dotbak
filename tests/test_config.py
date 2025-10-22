@@ -122,3 +122,17 @@ def test_load_config_legacy_paths_section_supported(tmp_path: Path, fake_home: P
     group = config.group("user_config")
     assert group.base_path == fake_home / "dotbak-config"
     assert group.entries == (Path("zsh"),)
+
+
+def test_group_overlapping_entries_raise(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        """
+        [groups.user_config]
+        base = "./base"
+        entries = ["systemd", "systemd/user"]
+        """,
+    )
+
+    with pytest.raises(ConfigError):
+        load_config(config_path)
