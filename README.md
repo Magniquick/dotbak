@@ -69,6 +69,7 @@ dotbak init --config ./dotbak.toml
 ```
 
 Add `--discover GROUP=PATH` (repeatable) to pre-populate entries from existing directories, and `--bootstrap-managed` to create the managed tree immediately.
+Prefer a guided experience? Use `dotbak init --interactive` to add groups and entries via prompts.
 
 Back up entries and create symlinks:
 

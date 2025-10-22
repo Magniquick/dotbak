@@ -119,6 +119,49 @@ def test_cli_init_and_doctor(tmp_path: Path, fake_home: Path) -> None:
     assert "not_tracked" in doctor_result.stdout
 
 
+def test_cli_init_interactive(tmp_path: Path, fake_home: Path) -> None:
+    config_path = tmp_path / "dotbak.toml"
+    managed_dir = tmp_path / "managed"
+    manifest = managed_dir / "manifest.toml"
+
+    input_data = "dotfiles\n~/dotfiles\nzsh,wezterm.lua\nN\n"
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--config",
+            str(config_path),
+            "--managed-root",
+            str(managed_dir),
+            "--interactive",
+        ],
+        input=input_data,
+    )
+
+    assert result.exit_code == 0
+    data = tomllib.loads(config_path.read_text())
+    assert data["groups"]["dotfiles"]["entries"] == ["zsh", "wezterm.lua"]
+    assert data["groups"]["dotfiles"]["base"] == "~/dotfiles"
+
+
+def test_cli_init_interactive_conflict(tmp_path: Path, fake_home: Path) -> None:
+    config_path = tmp_path / "dotbak.toml"
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--config",
+            str(config_path),
+            "--interactive",
+            "--discover",
+            "dot=~/dotfiles",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "cannot be combined" in result.stdout
+
+
 def test_cli_init_with_discovery_and_bootstrap(tmp_path: Path, fake_home: Path) -> None:
     project_dir = tmp_path / "project"
     config_path = project_dir / "dotbak.toml"

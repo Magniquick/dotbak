@@ -204,6 +204,38 @@ def _build_discovery(config_dir: Path, raw_discover: list[str] | None) -> list[D
     return groups
 
 
+def _interactive_collect_groups(config_dir: Path) -> list[DiscoveredGroup]:
+    console.print("[cyan]Interactive configuration wizard[/cyan]")
+    console.print("Press Enter to accept defaults. Entries should be relative paths beneath the base directory.")
+
+    groups: list[DiscoveredGroup] = []
+    while True:
+        default_name = "dotfiles" if not groups else f"group_{len(groups) + 1}"
+        group_name = typer.prompt("Group name", default=default_name)
+        base_input = typer.prompt("Base path", default=str(Path.home()))
+        resolved_base = _resolve_discovery_path(base_input, config_dir)
+
+        entries_input = typer.prompt(
+            "Entries (comma separated, leave blank for none)",
+            default="",
+        ).strip()
+        entries = [entry.strip() for entry in entries_input.split(",") if entry.strip()]
+
+        groups.append(
+            DiscoveredGroup(
+                name=_sanitize_group_name(group_name),
+                raw_path=base_input,
+                resolved_path=resolved_base,
+                entries=entries,
+            )
+        )
+
+        if not typer.confirm("Add another group?", default=False):
+            break
+
+    return groups
+
+
 def _render_init_config(*, managed_root: str, manifest_path: str, discovered: list[DiscoveredGroup]) -> str:
     if not discovered:
         return f"""# dotbak configuration
@@ -225,7 +257,7 @@ manifest_path = "{manifest_path}"
 
     data = {
         "paths": {group.name: group.raw_path for group in discovered},
-        "groups": {group.name: {"entries": group.entries} for group in discovered},
+        "groups": {group.name: {"base": group.raw_path, "entries": group.entries} for group in discovered},
         "settings": {
             "managed_root": managed_root,
             "manifest_path": manifest_path,
@@ -277,6 +309,11 @@ def init(
         "--bootstrap-managed/--no-bootstrap-managed",
         help="Create the managed directory structure after writing the config",
     ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive/--no-interactive",
+        help="Prompt for groups and entries interactively",
+    ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing config if present"),
 ) -> None:
     """Create a starter dotbak configuration file."""
@@ -286,10 +323,17 @@ def init(
         console.print(f"[red]Configuration '{config_path}' already exists. Use --force to overwrite.[/red]")
         raise typer.Exit(code=1)
 
+    if interactive and discover:
+        console.print("[red]--interactive cannot be combined with --discover.[/red]")
+        raise typer.Exit(code=1)
+
     config_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_setting = f"{managed_root.rstrip('/')}/manifest.toml"
 
-    discovered = _build_discovery(config_path.parent, discover)
+    if interactive:
+        discovered = _interactive_collect_groups(config_path.parent)
+    else:
+        discovered = _build_discovery(config_path.parent, discover)
 
     config_text = _render_init_config(
         managed_root=managed_root,

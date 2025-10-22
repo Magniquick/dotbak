@@ -2,7 +2,7 @@ from dotbak.cli import run
 
 
 def main() -> None:
-    """Entry point for running dotbak via `python -m` or the script directly."""
+    """Entry point for running dotbak via `python main.py`."""
 
     run()
 
