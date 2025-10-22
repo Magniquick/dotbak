@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
+import tomllib
 
 from dotbak.cli import app
 from dotbak.config import DEFAULT_CONFIG_FILENAME
@@ -117,3 +118,39 @@ def test_cli_init_and_doctor(tmp_path: Path, fake_home: Path) -> None:
     doctor_result = runner.invoke(app, ["doctor", "--config", str(config_path)])
     assert doctor_result.exit_code == 1
     assert "not_tracked" in doctor_result.stdout
+
+
+def test_cli_init_with_discovery_and_bootstrap(tmp_path: Path, fake_home: Path) -> None:
+    project_dir = tmp_path / "project"
+    config_path = project_dir / "dotbak.toml"
+    base_dir = tmp_path / "sources" / ".config"
+    base_dir.mkdir(parents=True)
+    (base_dir / "wezterm").mkdir()
+    (base_dir / "wezterm" / "wezterm.lua").write_text("return {}\n")
+    (base_dir / "helix").mkdir()
+    (base_dir / "helix" / "config.toml").write_text("theme = 'default'\n")
+
+    discover_arg = f"user_config={base_dir}"
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--config",
+            str(config_path),
+            "--discover",
+            discover_arg,
+            "--bootstrap-managed",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = tomllib.loads(config_path.read_text())
+
+    assert data["paths"]["user_config"] == discover_arg.split("=", 1)[1]
+    assert "wezterm" in data["groups"]["user_config"]["entries"]
+    assert "helix" in data["groups"]["user_config"]["entries"]
+    assert data["settings"]["managed_root"] == "./managed"
+
+    managed_root = (config_path.parent / "managed").resolve()
+    assert managed_root.exists()
+    assert (managed_root / "user_config").exists()

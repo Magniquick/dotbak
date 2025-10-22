@@ -70,6 +70,8 @@ Initialize a starter config:
 dotbak init --config ./dotbak.toml
 ```
 
+Add `--discover GROUP=PATH` (repeatable) to pre-populate entries from existing directories, and `--bootstrap-managed` to create the managed tree immediately.
+
 Back up entries and create symlinks:
 
 ```sh

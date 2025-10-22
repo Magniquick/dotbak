@@ -65,7 +65,7 @@ manifest_path = "./managed/manifest.toml"
 - Temporary copies land in `<managed_root>/.staging` during atomic operations.
 
 ## Command Overview
-- `init`: Create a skeleton config file (current implementation writes a commented template).
+- `init`: Create a skeleton config file. Supports discovery via `--discover GROUP=PATH` and optional managed-directory bootstrapping with `--bootstrap-managed`.
 - `apply`: Copy files into the managed directory and convert originals into symlinks when safe.
 - `status`: Compare manifest entries against current files, reporting drift (changed, missing, extra).
 - `restore`: Replace symlinks with real files from managed copies; supports forgetting entries and pruning managed copies.
