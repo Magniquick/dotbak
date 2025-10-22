@@ -64,7 +64,11 @@ manifest_path = "./managed/manifest.toml"
 > Managing system paths (for example `/etc`) typically requires root privileges. When dotbak encounters entries that cannot be replaced with symlinks due to permissions, re-run the relevant command with elevated rights (e.g., `sudo dotbak apply`).
 
 ## Usage
-`dotbak apply` and `dotbak status` are available today; additional commands (`init`, `restore`, `doctor`) remain on the roadmap.
+Initialize a starter config:
+
+```sh
+dotbak init --config ./dotbak.toml
+```
 
 Back up entries and create symlinks:
 
@@ -76,6 +80,18 @@ Check the current state of managed entries:
 
 ```sh
 dotbak status --config /path/to/dotbak.toml
+```
+
+Restore real files from managed copies (and optionally stop tracking them):
+
+```sh
+dotbak restore --config /path/to/dotbak.toml --forget
+```
+
+Run a health check that exits non-zero when issues are detected:
+
+```sh
+dotbak doctor --config /path/to/dotbak.toml
 ```
 
 Pass `--group` multiple times to target specific groups. See `AGENTS.md` for the roadmap and deeper implementation notes.

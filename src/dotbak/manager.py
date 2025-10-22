@@ -12,6 +12,7 @@ from .filesystem import (
     detect_entry_type,
     ensure_symlink,
     hash_path,
+    remove_path,
     symlink_points_to,
 )
 from .manifest import Manifest
@@ -21,6 +22,8 @@ from .models import (
     EntryType,
     ManifestEntry,
     ManagedPath,
+    RestoreAction,
+    RestoreResult,
     StatusEntry,
     StatusReport,
     StatusState,
@@ -73,6 +76,19 @@ class DotbakManager:
 
         entries.sort(key=lambda item: item.path.key())
         return StatusReport(entries=tuple(entries))
+
+    def restore(self, groups: Iterable[str] | None = None, *, forget: bool = False) -> list[RestoreResult]:
+        selected = self._select_groups(groups)
+        results: list[RestoreResult] = []
+
+        for group in selected:
+            for entry in group.entries:
+                results.append(self._restore_entry(group, entry, forget=forget))
+
+        if forget:
+            self.manifest.save()
+
+        return results
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -204,4 +220,42 @@ class DotbakManager:
         return StatusEntry(
             path=managed_path,
             state=StatusState.IN_SYNC,
+        )
+
+    def _restore_entry(self, group: GroupConfig, entry: Path, *, forget: bool) -> RestoreResult:
+        managed_path = ManagedPath(group.name, entry)
+        source = group.source_path(entry)
+        managed = group.destination_path(self.config.settings.managed_root, entry)
+        manifest_entry = self.manifest.get(group.name, entry)
+
+        if manifest_entry is None:
+            return RestoreResult(
+                path=managed_path,
+                source=source,
+                managed=managed,
+                action=RestoreAction.SKIPPED,
+                details="Entry not tracked in manifest",
+            )
+
+        if not managed.exists() and not managed.is_symlink():
+            return RestoreResult(
+                path=managed_path,
+                source=source,
+                managed=managed,
+                action=RestoreAction.SKIPPED,
+                details="Managed copy missing",
+            )
+
+        copy_entry(managed, source)
+
+        if forget:
+            self.manifest.remove(manifest_entry)
+            remove_path(managed)
+
+        return RestoreResult(
+            path=managed_path,
+            source=source,
+            managed=managed,
+            action=RestoreAction.RESTORED,
+            details="Removed symlink and restored contents",
         )

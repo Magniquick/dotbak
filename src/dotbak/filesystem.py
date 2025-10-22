@@ -157,3 +157,14 @@ def symlink_points_to(source: Path, target: Path) -> bool:
     current_resolved = (source.parent / current).resolve(strict=False)
     target_resolved = target.resolve(strict=False)
     return current_resolved == target_resolved
+
+
+def remove_path(path: Path) -> None:
+    """Delete ``path`` whether it is a file, directory, or symlink."""
+
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+    shutil.rmtree(path)

@@ -65,11 +65,11 @@ manifest_path = "./managed/manifest.toml"
 - Temporary copies land in `<managed_root>/.staging` during atomic operations.
 
 ## Command Overview
-- `init`: Create a skeleton config file and managed directory; optionally discover candidate dotfiles.
+- `init`: Create a skeleton config file (current implementation writes a commented template).
 - `apply`: Copy files into the managed directory and convert originals into symlinks when safe.
 - `status`: Compare manifest entries against current files, reporting drift (changed, missing, extra).
-- `restore`: Replace symlinks with real files from managed copies (useful when uninstalling the manager).
-- `doctor`: Run sanity checks (valid symlinks, manifest consistency, writable destinations).
+- `restore`: Replace symlinks with real files from managed copies; supports forgetting entries and pruning managed copies.
+- `doctor`: Run sanity checks (valid symlinks, manifest consistency, writable destinations) and exit non-zero on issues.
 
 ## Metadata Strategy
 - Prefer `shutil.copy2` and `os.lchmod`/`os.lchown` where supported to retain permission bits and ownership.
@@ -95,8 +95,7 @@ manifest_path = "./managed/manifest.toml"
 - `agent_docs/uv_quickstart.md` explains the Astral `uv` workflow used in this project.
 
 ## Next Implementation Steps
-1. Implement the Typer-based CLI in `dotbak/cli.py`, wiring commands to the manager.
-2. Build restoration logic that can swap symlinks back to real files and optionally clean managed copies.
-3. Add privilege-awareness to the manager/CLI (clear messaging when operations require root).
-4. Extend manifest verification (checksum caching, pruning removed entries) and add integration tests that exercise CLI flows.
-5. Investigate platform-specific metadata support (ownership, extended attributes) behind feature flags.
+1. Enhance `init` with optional discovery (e.g., suggest common dotfiles) and managed directory bootstrapping.
+2. Add privilege-awareness to the manager/CLI (clear messaging when operations require root) and extend automated tests to cover failure paths.
+3. Extend manifest verification (checksum caching, pruning removed entries) and add integration tests that exercise CLI flows end-to-end (apply → status → restore).
+4. Investigate platform-specific metadata support (ownership, extended attributes) behind feature flags.

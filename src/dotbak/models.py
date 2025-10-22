@@ -57,6 +57,24 @@ class ApplyResult:
     action: ApplyAction
 
 
+class RestoreAction(str, Enum):
+    """Outcome of a restore operation."""
+
+    RESTORED = "restored"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreResult:
+    """Result emitted when restoring an entry."""
+
+    path: ManagedPath
+    source: Path
+    managed: Path
+    action: RestoreAction
+    details: str | None = None
+
+
 class StatusState(str, Enum):
     """High-level states reported by ``dotbak status``."""
 

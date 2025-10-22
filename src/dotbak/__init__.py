@@ -7,6 +7,8 @@ from .manifest import Manifest
 from .models import (
     ApplyAction,
     ApplyResult,
+    RestoreAction,
+    RestoreResult,
     StatusEntry,
     StatusReport,
     StatusState,
@@ -21,6 +23,8 @@ __all__ = [
     "Manifest",
     "ApplyAction",
     "ApplyResult",
+    "RestoreAction",
+    "RestoreResult",
     "StatusEntry",
     "StatusReport",
     "StatusState",

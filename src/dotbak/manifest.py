@@ -48,7 +48,9 @@ class Manifest:
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "entries": [self._entry_to_dict(entry) for entry in sorted(self._entries.values(), key=lambda e: e.path.key())]
+            "entries": [
+                self._entry_to_dict(entry) for entry in sorted(self._entries.values(), key=lambda e: e.path.key())
+            ]
         }
         with self.path.open("wb") as handle:
             toml_dump(payload, handle)

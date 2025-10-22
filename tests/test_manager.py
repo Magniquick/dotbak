@@ -7,7 +7,7 @@ import pytest
 
 from dotbak.config import DEFAULT_CONFIG_FILENAME, load_config
 from dotbak.manager import DotbakManager
-from dotbak.models import ApplyAction, StatusState
+from dotbak.models import ApplyAction, RestoreAction, StatusState
 
 
 def _write_config(config_dir: Path, body: str) -> Path:
@@ -181,3 +181,31 @@ manifest_path = "{manifest_path}"
     report = new_manager.status()
 
     assert any(entry.state is StatusState.ORPHANED for entry in report.entries)
+
+
+def test_restore_forget_removes_manifest(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "wezterm.lua"
+    source_file.write_text("return {}\n")
+
+    config_body = f"""
+[paths]
+user = "{base_dir}"
+
+[groups.user]
+entries = ["wezterm.lua"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    results = manager.restore(forget=True)
+    assert results[0].action is RestoreAction.RESTORED
+    assert not source_file.is_symlink()
+    assert manager.manifest.get("user", Path("wezterm.lua")) is None
+    assert not (managed_dir / "user" / "wezterm.lua").exists()
