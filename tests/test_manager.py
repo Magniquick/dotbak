@@ -225,10 +225,9 @@ manifest_path = "{manifest_path}"
     results = manager.restore()
     result = results[0]
     assert result.action is RestoreAction.RESTORED
-    assert result.details is not None and ".dotbak-backup" in result.details
-
-    backups = list(base_dir.glob("wezterm.lua.dotbak-backup*"))
-    assert backups, "Expected a backup file to be created"
+    assert result.details is None
+    assert source_file.read_text() == "return {}\n"
+    assert not list(base_dir.glob("wezterm.lua.dotbak-backup*"))
 
 
 def test_apply_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -563,17 +562,53 @@ manifest_path = "{manifest_path}"
     assert "Managed copy missing" in (result[0].details or "")
 
 
-def test_restore_backup_counter_increment(tmp_path: Path) -> None:
+def test_restore_directory_atomic(tmp_path: Path) -> None:
     project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
-    source_file = base_dir / "file"
-    source_file.write_text("data\n")
+    live_dir = base_dir / "dir"
+    live_dir.mkdir(parents=True, exist_ok=True)
+    (live_dir / "config.conf").write_text("managed\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["dir"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+
+    manager.apply()
+
+    managed_dir_path = managed_dir / "user" / "dir"
+
+    (managed_dir_path / "config.conf").write_text("managed\n")
+    live_dir.unlink()
+    live_dir.mkdir()
+    (live_dir / "config.conf").write_text("local\n")
+    (live_dir / "extra").write_text("extra\n")
+
+    result = manager.restore()
+    assert result[0].action is RestoreAction.RESTORED
+    assert (live_dir / "config.conf").read_text() == "managed\n"
+    assert not (live_dir / "extra").exists()
+    assert not list(base_dir.glob(".dir.dotbak-backup*"))
+
+
+def test_restore_file_overwrites_directory(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "script"
+    source_file.write_text("echo ok\n")
 
     config_path = _write_config(
         project_dir,
         f"""
 [groups.user]
 base = "{base_dir}"
-entries = ["file"]
+entries = ["script"]
 
 [settings]
 managed_root = "{managed_dir}"
@@ -584,13 +619,48 @@ manifest_path = "{manifest_path}"
     manager = DotbakManager(load_config(config_path))
     manager.apply()
 
-    backup_existing = source_file.with_name(f"{source_file.name}.dotbak-backup")
-    backup_existing.write_text("old\n")
     source_file.unlink()
-    source_file.write_text("custom\n")
+    source_file.mkdir()
+    (source_file / "old").write_text("old\n")
 
     result = manager.restore()
-    assert "dotbak-backup2" in (result[0].details or "")
+    assert result[0].action is RestoreAction.RESTORED
+    assert source_file.read_text() == "echo ok\n"
+
+
+def test_restore_symlink_entry(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    target = base_dir / "target.txt"
+    target.write_text("value\n")
+    symlink_path = base_dir / "link.txt"
+    symlink_path.symlink_to(target)
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["link.txt"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    managed_symlink = managed_dir / "user" / "link.txt"
+    assert managed_symlink.is_symlink()
+    assert os.readlink(managed_symlink) == os.readlink(symlink_path)
+
+    symlink_path.unlink()
+    symlink_path.symlink_to(base_dir / "wrong.txt")
+
+    manager.restore()
+    assert symlink_path.is_symlink()
+    assert os.readlink(symlink_path) == os.readlink(managed_symlink)
 
 
 def test_permission_issues_ancestor_not_writable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -651,6 +721,33 @@ manifest_path = "{manifest_path}"
 
     with pytest.raises(DotbakError):
         manager._ensure_writable(target, create_missing=True)
+
+
+def test_permission_issues_reports_symlink_warnings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    target = tmp_path / "target"
+    target.write_text("secret\n")
+    target.chmod(0o444)
+    link = base_dir / "link"
+    link.symlink_to(target)
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["link"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    issues = manager.permission_issues()
+    assert issues
+    assert "shadowing existing symlink" in issues[0][1]
 
 
 def test_ensure_writable_symlink_shadow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

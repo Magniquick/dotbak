@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
+import uuid
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -11,6 +14,7 @@ from .filesystem import (
     collect_metadata,
     copy_entry,
     detect_entry_type,
+    ensure_parent,
     ensure_symlink,
     hash_path,
     remove_path,
@@ -315,14 +319,15 @@ class DotbakManager:
                 details="Managed copy missing",
             )
 
-        backup_path: Path | None = None
-        if source.exists() or source.is_symlink():
-            if source.is_symlink():
-                remove_path(source)
-            else:
-                backup_path = self._backup_existing(source)
+        entry_type = detect_entry_type(managed)
 
-        copy_entry(managed, source)
+        if entry_type == EntryType.FILE:
+            self._restore_file_entry(managed, source)
+        elif entry_type == EntryType.SYMLINK:
+            self._restore_symlink_entry(managed, source)
+        else:
+            self._restore_directory_entry(managed, source)
+
         self._apply_manifest_metadata(source, manifest_entry)
 
         if forget:
@@ -334,22 +339,62 @@ class DotbakManager:
             source=source,
             managed=managed,
             action=RestoreAction.RESTORED,
-            details=(f"Existing entry backed up to '{backup_path}'" if backup_path else None),
+            details=None,
         )
 
-    def _backup_existing(self, path: Path) -> Path:
-        backup_base = path.with_name(f"{path.name}.dotbak-backup")
-        candidate = backup_base
-        counter = 1
-        while candidate.exists():
-            counter += 1
-            candidate = path.with_name(f"{path.name}.dotbak-backup{counter}")
-            if counter > 50:
-                raise DotbakError(
-                    f"Failed to find free backup filename for '{path}'. Please clean up existing backups and retry."
-                )
-        path.rename(candidate)
-        return candidate
+    def _restore_file_entry(self, managed: Path, destination: Path) -> None:
+        if destination.is_dir():
+            remove_path(destination)
+        if destination.is_symlink():
+            remove_path(destination)
+
+        ensure_parent(destination)
+        fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.dotbak-tmp-", dir=destination.parent)
+        os.close(fd)
+        temp_path = Path(temp_name)
+        try:
+            shutil.copy2(managed, temp_path)
+            os.replace(temp_path, destination)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            raise
+
+    def _restore_symlink_entry(self, managed: Path, destination: Path) -> None:
+        if destination.exists() or destination.is_symlink():
+            remove_path(destination)
+        ensure_parent(destination)
+        target = os.readlink(managed)
+        destination.symlink_to(target)
+
+    def _restore_directory_entry(self, managed: Path, destination: Path) -> None:
+        if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+            remove_path(destination)
+
+        ensure_parent(destination)
+        if not destination.exists():
+            shutil.copytree(managed, destination, symlinks=True, copy_function=shutil.copy2)
+            return
+
+        temp_dir = destination.parent / f".{destination.name}.dotbak-tmp-{uuid.uuid4().hex}"
+        try:
+            shutil.copytree(managed, temp_dir, symlinks=True, copy_function=shutil.copy2)
+            backup = destination.parent / f".{destination.name}.dotbak-backup"
+            counter = 1
+            while backup.exists():
+                counter += 1
+                backup = destination.parent / f".{destination.name}.dotbak-backup{counter}"
+
+            os.rename(destination, backup)
+            try:
+                os.rename(temp_dir, destination)
+            except Exception:
+                os.rename(backup, destination)
+                raise
+            shutil.rmtree(backup, ignore_errors=True)
+        finally:
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _apply_manifest_metadata(self, path: Path, manifest_entry: ManifestEntry) -> None:
         uid = manifest_entry.uid
