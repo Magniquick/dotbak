@@ -315,9 +315,7 @@ class DotbakManager:
         if path.exists() or path.is_symlink():
             if os.access(path, os.W_OK):
                 return
-            raise DotbakError(
-                f"Insufficient permissions to modify '{path}'. Run with elevated privileges."
-            )
+            raise DotbakError(f"Insufficient permissions to modify '{path}'. Run with elevated privileges.")
 
         if not os.access(parent, os.W_OK):
             raise DotbakError(

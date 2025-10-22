@@ -49,6 +49,9 @@ def _handle_error(exc: Exception) -> None:
         raise typer.Exit(code=1)
     if isinstance(exc, DotbakError):
         console.print(f"[red]{exc}[/red]")
+        lowered = str(exc).lower()
+        if "insufficient permissions" in lowered or "elevated privileges" in lowered:
+            console.print("[yellow]Tip: try rerunning with `sudo` or grant write access to the target directories.[/yellow]")
         raise typer.Exit(code=1)
     raise exc
 
