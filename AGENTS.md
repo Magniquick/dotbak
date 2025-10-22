@@ -89,6 +89,7 @@ manifest_path = "./managed/manifest.toml"
 - Run the test suite with `uv run pytest` to leverage the managed virtual environment.
 - Configuration parsing is implemented in `src/dotbak/config.py` with Pydantic-based validation.
 - Tests stub the home directory to a temporary path so no operations touch the real filesystem.
+- Auto-formatting uses Black (`line-length = 120`). Developers can enable the bundled hook with `git config core.hooksPath .githooks`.
 
 ## Reference Material
 - `agent_docs/pathlib.txt` contains a local copy of the Python `pathlib` documentation.

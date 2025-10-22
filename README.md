@@ -105,6 +105,11 @@ uv run pytest
 
 Tests operate entirely within temporary directories, ensuring your actual dotfiles remain untouched.
 
+## Development Notes
+- Source code lives under `src/dotbak`; tests reside in `tests/`.
+- Use `uv run pytest` and `uv run black .` for quick validation.
+- Auto-formatting uses Black with `line-length = 120`; enable the git hook via `git config core.hooksPath .githooks`.
+
 ## Contributing
 Contributions are welcome! Please open an issue or pull request with your ideas.
 

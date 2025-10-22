@@ -40,9 +40,7 @@ class Settings(BaseModel):
         managed = _expand_path(raw.get("managed_root", Path("./managed")), base_dir=base_dir)
         manifest_raw = raw.get("manifest_path")
         manifest = (
-            _expand_path(manifest_raw, base_dir=base_dir)
-            if manifest_raw is not None
-            else managed / "manifest.toml"
+            _expand_path(manifest_raw, base_dir=base_dir) if manifest_raw is not None else managed / "manifest.toml"
         )
         return cls(managed_root=managed, manifest_path=manifest)
 
@@ -71,13 +69,9 @@ class GroupConfig(BaseModel):
         for entry in entries_raw:
             candidate = Path(str(entry))
             if candidate.is_absolute():
-                raise ConfigError(
-                    f"Group '{name}' entry '{candidate}' must be relative to the base path"
-                )
+                raise ConfigError(f"Group '{name}' entry '{candidate}' must be relative to the base path")
             if ".." in candidate.parts:
-                raise ConfigError(
-                    f"Group '{name}' entry '{candidate}' must not escape its base path"
-                )
+                raise ConfigError(f"Group '{name}' entry '{candidate}' must not escape its base path")
             entries.append(candidate)
 
         return cls(name=name, base_path=base_path, entries=tuple(entries))
@@ -140,9 +134,7 @@ def load_config(path: Path | None = None) -> Config:
         try:
             base_path = base_paths[group_name]
         except KeyError as exc:
-            raise ConfigError(
-                f"Group '{group_name}' is missing a base path entry under [paths]"
-            ) from exc
+            raise ConfigError(f"Group '{group_name}' is missing a base path entry under [paths]") from exc
         groups[group_name] = GroupConfig.from_raw(group_name, base_path, group_body)
 
     settings = Settings.from_raw(data.get("settings", {}), base_dir=base_dir)
@@ -161,9 +153,7 @@ def _resolve_config_path(path: Path | None) -> Path:
     if path.is_dir():
         candidate = path / DEFAULT_CONFIG_FILENAME
         if not candidate.exists():
-            raise ConfigError(
-                f"Expected to find '{DEFAULT_CONFIG_FILENAME}' inside '{path}', but none was located"
-            )
+            raise ConfigError(f"Expected to find '{DEFAULT_CONFIG_FILENAME}' inside '{path}', but none was located")
         path = candidate
 
     return path.resolve(strict=False)
