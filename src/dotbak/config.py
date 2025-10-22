@@ -33,6 +33,7 @@ class Settings(BaseModel):
 
     managed_root: Path = Field(default_factory=lambda: Path("./managed"))
     manifest_path: Path
+    dot_prefix_style: str | None = Field(default=None)
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any], *, base_dir: Path) -> "Settings":
@@ -41,7 +42,10 @@ class Settings(BaseModel):
         manifest = (
             _expand_path(manifest_raw, base_dir=base_dir) if manifest_raw is not None else managed / "manifest.toml"
         )
-        return cls(managed_root=managed, manifest_path=manifest)
+        style = raw.get("dot_prefix_style")
+        if style not in (None, "underscore"):
+            raise ConfigError("[settings] dot_prefix_style must be one of: 'underscore'")
+        return cls(managed_root=managed, manifest_path=manifest, dot_prefix_style=style)
 
 
 class GroupConfig(BaseModel):
@@ -75,10 +79,22 @@ class GroupConfig(BaseModel):
 
         return cls(name=name, base_path=base_path, entries=tuple(entries))
 
-    def destination_path(self, managed_root: Path, entry: Path) -> Path:
+    def destination_path(
+        self,
+        managed_root: Path,
+        entry: Path,
+        *,
+        dot_prefix_style: str | None = None,
+    ) -> Path:
         """Return the managed directory path for ``entry``."""
 
-        return managed_root / self.name / entry
+        parts: list[str] = []
+        for part in entry.parts:
+            if dot_prefix_style == "underscore" and part.startswith(".") and len(part) > 1:
+                parts.append(f"dot_{part[1:]}")
+            else:
+                parts.append(part)
+        return managed_root / self.name / Path(*parts)
 
     def source_path(self, entry: Path) -> Path:
         """Return the source path for ``entry`` under the base path."""

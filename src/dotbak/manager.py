@@ -137,7 +137,11 @@ class DotbakManager:
         if not source.exists() and not source.is_symlink():
             raise DotbakError(f"Source path '{source}' does not exist")
 
-        managed = group.destination_path(self.config.settings.managed_root, entry)
+        managed = group.destination_path(
+            self.config.settings.managed_root,
+            entry,
+            dot_prefix_style=self.config.settings.dot_prefix_style,
+        )
         managed_path = ManagedPath(group.name, entry)
 
         existing_entry = self.manifest.get(group.name, entry)
@@ -202,7 +206,11 @@ class DotbakManager:
         managed_path = ManagedPath(group.name, entry)
         manifest_entry = self.manifest.get(group.name, entry)
         source = group.source_path(entry)
-        managed = group.destination_path(self.config.settings.managed_root, entry)
+        managed = group.destination_path(
+            self.config.settings.managed_root,
+            entry,
+            dot_prefix_style=self.config.settings.dot_prefix_style,
+        )
 
         if manifest_entry is None:
             return StatusEntry(
@@ -268,7 +276,11 @@ class DotbakManager:
     def _restore_entry(self, group: GroupConfig, entry: Path, *, forget: bool) -> RestoreResult:
         managed_path = ManagedPath(group.name, entry)
         source = group.source_path(entry)
-        managed = group.destination_path(self.config.settings.managed_root, entry)
+        managed = group.destination_path(
+            self.config.settings.managed_root,
+            entry,
+            dot_prefix_style=self.config.settings.dot_prefix_style,
+        )
         manifest_entry = self.manifest.get(group.name, entry)
 
         if manifest_entry is None:
