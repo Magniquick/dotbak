@@ -7,7 +7,7 @@ import pytest
 
 from dotbak.config import DEFAULT_CONFIG_FILENAME, load_config
 from dotbak.manager import DotbakError, DotbakManager
-from dotbak.models import ApplyAction, RestoreAction, StatusState
+from dotbak.models import ApplyAction, EntryType, ManagedPath, ManifestEntry, RestoreAction, StatusState
 
 
 def _write_config(config_dir: Path, body: str) -> Path:
@@ -314,3 +314,314 @@ manifest_path = "{manifest_path}"
 
     issues = manager.permission_issues()
     assert issues
+
+
+def test_select_groups_raises_on_unknown(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    (base_dir / "file").write_text("data\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+
+    with pytest.raises(DotbakError):
+        manager.status(["missing"])  # type: ignore[arg-type]
+
+
+def test_apply_missing_source_raises(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["does-not-exist"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+
+    with pytest.raises(DotbakError):
+        manager.apply()
+
+
+def test_apply_manifest_metadata_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    target = base_dir / "file"
+    target.write_text("content\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+
+    manifest_entry = ManifestEntry(
+        path=ManagedPath("user", Path("file")),
+        digest="abc",
+        size=0,
+        mode=0o644,
+        mtime_ns=0,
+        entry_type=EntryType.FILE,
+        uid=1000,
+        gid=1000,
+    )
+
+    def raise_perm(*_args, **_kwargs):
+        raise PermissionError()
+
+    monkeypatch.setattr("dotbak.manager.os.lchown", raise_perm)
+
+    with pytest.raises(DotbakError):
+        manager._apply_manifest_metadata(target, manifest_entry)
+
+
+def test_status_content_differs(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    managed_file = managed_dir / "user" / "file"
+    managed_file.write_text("modified\n")
+
+    report = manager.status()
+    assert report.entries[0].state is StatusState.CONTENT_DIFFER
+
+
+def test_status_source_missing(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    source_file.unlink()
+
+    report = manager.status()
+    assert report.entries[0].state is StatusState.SOURCE_MISMATCH
+    assert "missing" in (report.entries[0].details or "")
+
+
+def test_status_symlink_wrong_target(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+    wrong_target = base_dir / "other"
+    wrong_target.write_text("else\n")
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    source_file.unlink()
+    source_file.symlink_to(wrong_target)
+
+    report = manager.status()
+    assert report.entries[0].state is StatusState.SOURCE_MISMATCH
+    assert "does not point" in (report.entries[0].details or "")
+
+
+def test_apply_skips_when_contents_match(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    managed_file = managed_dir / "user" / "file"
+    source_file.unlink()
+    source_file.write_text(managed_file.read_text())
+
+    result = manager.apply()
+    assert result[0].action is ApplyAction.SKIPPED
+
+
+def test_restore_skips_when_managed_missing(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    managed_file = managed_dir / "user" / "file"
+    managed_file.unlink()
+
+    result = manager.restore(force=True)
+    assert result[0].action is RestoreAction.SKIPPED
+    assert "Managed copy missing" in (result[0].details or "")
+
+
+def test_restore_backup_counter_increment(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    backup_existing = source_file.with_name(f"{source_file.name}.dotbak-backup")
+    backup_existing.write_text("old\n")
+    source_file.unlink()
+    source_file.write_text("custom\n")
+
+    result = manager.restore()
+    assert "dotbak-backup2" in (result[0].details or "")
+
+
+def test_permission_issues_ancestor_not_writable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+
+    def fake_access(path, mode):
+        if Path(path) == base_dir:
+            return False
+        return True
+
+    monkeypatch.setattr("dotbak.manager.os.access", fake_access)
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    issues = manager.permission_issues()
+    assert issues
+
+
+def test_permission_issues_parent_creation_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["newdir/file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+    target = base_dir / "newdir" / "file"
+
+    monkeypatch.setattr("dotbak.manager.os.access", lambda *_args, **_kwargs: True)
+
+    def raise_perm(self, *args, **kwargs):  # type: ignore[override]
+        raise PermissionError()
+
+    monkeypatch.setattr(Path, "mkdir", raise_perm, raising=False)
+
+    with pytest.raises(DotbakError):
+        manager._ensure_writable(target, create_missing=True)

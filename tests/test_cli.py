@@ -6,9 +6,11 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from dotbak import cli as cli_module
 from dotbak.cli import app
 from dotbak.config import DEFAULT_CONFIG_FILENAME
 from dotbak.manifest import Manifest
+from dotbak.models import ManagedPath, StatusEntry, StatusReport, StatusState
 
 runner = CliRunner()
 
@@ -196,3 +198,77 @@ def test_cli_init_with_discovery_and_bootstrap(tmp_path: Path, fake_home: Path) 
     managed_root = (config_path.parent / "managed").resolve()
     assert managed_root.exists()
     assert (managed_root / "user_config").exists()
+
+
+def test_cli_status_missing_config(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.toml"
+    result = runner.invoke(app, ["status", "--config", str(missing)])
+    assert result.exit_code == 1
+    assert "Use 'dotbak init" in result.stdout
+
+
+def test_cli_apply_handles_dotbak_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class DummyManager:
+        def apply(self, *_args, **_kwargs):  # noqa: ANN001
+            raise cli_module.DotbakError("Insufficient permissions to modify '/tmp/foo'")
+
+    monkeypatch.setattr(cli_module, "_load_manager", lambda _config: DummyManager())
+
+    result = runner.invoke(app, ["apply"])
+    assert result.exit_code == 1
+    assert "Tip: try rerunning with `sudo`" in result.stdout
+
+
+def test_cli_doctor_permission_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
+    class DummyManager:
+        def status(self, *_args, **_kwargs):  # noqa: ANN001
+            return StatusReport(
+                entries=(StatusEntry(path=ManagedPath("grp", Path("entry")), state=StatusState.IN_SYNC),)
+            )
+
+        def permission_issues(self, *_args, **_kwargs):  # noqa: ANN001
+            return [(ManagedPath("grp", Path("entry")), "Cannot write to /etc")]  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli_module, "_load_manager", lambda _config: DummyManager())
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "Permission preflight warnings" in result.stdout
+    assert "Cannot write to /etc" in result.stdout
+
+
+def test_build_discovery_missing_path(tmp_path: Path) -> None:
+    groups = cli_module._build_discovery(tmp_path, ["grp=./missing"])
+    assert groups[0].entries == []
+
+
+def test_build_discovery_relative_path(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "file.txt").write_text("hi")
+    groups = cli_module._build_discovery(tmp_path, [f"grp=./root"])
+    assert groups[0].entries == ["file.txt"]
+
+
+def test_discover_entries_missing_returns_empty(tmp_path: Path) -> None:
+    assert cli_module._discover_entries(tmp_path / "nope") == []
+
+
+def test_init_refuses_without_force(tmp_path: Path, fake_home: Path) -> None:
+    config_path = tmp_path / "dotbak.toml"
+    config_path.write_text("existing")
+    result = runner.invoke(app, ["init", "--config", str(config_path)])
+    assert result.exit_code == 1
+    assert "Use --force" in result.stdout
+
+
+def test_run_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {}
+
+    class DummyApp:
+        def __call__(self):
+            called["invoked"] = True
+
+    monkeypatch.setattr(cli_module, "app", DummyApp())
+    cli_module.run()
+    assert called.get("invoked") is True
