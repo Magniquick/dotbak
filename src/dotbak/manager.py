@@ -386,9 +386,22 @@ class DotbakManager:
                                 f"Insufficient permissions to modify file '{file_path}'. Run with elevated privileges."
                             )
             elif not os.access(path, os.W_OK):
+                if path.is_symlink():
+                    target = Path(os.readlink(path))
+                    target_abs = (path.parent / target).resolve(strict=False)
+                    if not os.access(target_abs, os.W_OK):
+                        raise DotbakError(f"Insufficient permissions to modify '{path}'. Run with elevated privileges.")
+                    self._warn_symlink_shadow(path, target_abs)
+                    return
                 raise DotbakError(f"Insufficient permissions to modify '{path}'. Run with elevated privileges.")
         else:
             if not os.access(parent, os.W_OK | os.X_OK):
                 raise DotbakError(
                     f"Cannot write to parent directory '{parent}' for '{path}'. Run with elevated privileges."
                 )
+
+    def _warn_symlink_shadow(self, path: Path, target: Path) -> None:
+        console.print(
+            "[yellow]Warning:[/yellow] shadowing existing symlink '"
+            f"{path}' pointing to '{target}'. dotbak will manage a copy."
+        )
