@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
-import tomllib
 
 from dotbak.cli import app
 from dotbak.config import DEFAULT_CONFIG_FILENAME
 from dotbak.manifest import Manifest
-
 
 runner = CliRunner()
 

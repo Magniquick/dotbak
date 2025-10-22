@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-import tomllib
 from tomli_w import dump as toml_dump
 
-from .models import EntryType, ManifestEntry, ManagedPath
+from .models import EntryType, ManagedPath, ManifestEntry
 
 
 class Manifest:

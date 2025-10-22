@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
-import tomllib
 from pydantic import BaseModel, ConfigDict, Field
-
 
 DEFAULT_CONFIG_FILENAME = "dotbak.toml"
 
