@@ -90,6 +90,7 @@ manifest_path = "./managed/manifest.toml"
 - Configuration parsing is implemented in `src/dotbak/config.py` with Pydantic-based validation.
 - Tests stub the home directory to a temporary path so no operations touch the real filesystem.
 - Auto-formatting uses Black (`line-length = 120`). Developers can enable the bundled hook with `git config core.hooksPath .githooks`.
+- Pre-commit is configured with local `uv`-powered hooks (`isort`, `black`). Run `uv run pre-commit run --all-files` during CI or before large refactors.
 
 ## Reference Material
 - `agent_docs/pathlib.txt` contains a local copy of the Python `pathlib` documentation.

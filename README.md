@@ -119,6 +119,7 @@ Tests operate entirely within temporary directories, ensuring your actual dotfil
 - Source code lives under `src/dotbak`; tests reside in `tests/`.
 - Use `uv run pytest` and `uv run black .` for quick validation.
 - Auto-formatting uses Black with `line-length = 120`; enable the git hook via `git config core.hooksPath .githooks`.
+- Pre-commit hooks are configured via `.pre-commit-config.yaml`; run `uv run pre-commit run --all-files` to lint manually.
 - Manifest entries capture ownership metadata when available. Restoring into privileged paths may require running commands with elevated privileges so ownership can be re-applied.
 
 ## Contributing
