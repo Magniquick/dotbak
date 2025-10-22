@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from dotbak.config import DEFAULT_CONFIG_FILENAME, load_config
-from dotbak.manager import DotbakManager
+from dotbak.manager import DotbakError, DotbakManager
 from dotbak.models import ApplyAction, RestoreAction, StatusState
 
 
@@ -229,3 +229,28 @@ manifest_path = "{manifest_path}"
 
     backups = list(base_dir.glob("wezterm.lua.dotbak-backup*"))
     assert backups, "Expected a backup file to be created"
+
+
+def test_apply_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    target_file = base_dir / "file"
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text("data\n")
+
+    monkeypatch.setattr("os.access", lambda path, mode: False)
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+
+    with pytest.raises(DotbakError):
+        manager.apply()

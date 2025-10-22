@@ -49,6 +49,8 @@ class DotbakManager:
 
         for group in selected:
             for entry in group.entries:
+                source = group.source_path(entry)
+                self._ensure_writable(source)
                 results.append(self._apply_entry(group, entry))
 
         self.manifest.save()
@@ -84,6 +86,8 @@ class DotbakManager:
 
         for group in selected:
             for entry in group.entries:
+                source = group.source_path(entry)
+                self._ensure_writable(source)
                 results.append(self._restore_entry(group, entry, forget=forget))
 
         if forget:
@@ -296,3 +300,26 @@ class DotbakManager:
             raise DotbakError(
                 f"Unable to set ownership on '{path}'. Re-run with elevated privileges if ownership matters."
             ) from None
+
+    def _ensure_writable(self, path: Path) -> None:
+        parent = path.parent
+        if not parent.exists():
+            try:
+                parent.mkdir(parents=True, exist_ok=True)
+                return
+            except PermissionError as exc:
+                raise DotbakError(
+                    f"Cannot create parent directory '{parent}' for '{path}'. Run with elevated privileges."
+                ) from exc
+
+        if path.exists() or path.is_symlink():
+            if os.access(path, os.W_OK):
+                return
+            raise DotbakError(
+                f"Insufficient permissions to modify '{path}'. Run with elevated privileges."
+            )
+
+        if not os.access(parent, os.W_OK):
+            raise DotbakError(
+                f"Cannot write to parent directory '{parent}' for '{path}'. Run with elevated privileges."
+            )
