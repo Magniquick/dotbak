@@ -658,6 +658,7 @@ def test_ensure_writable_symlink_shadow(tmp_path: Path, monkeypatch: pytest.Monk
     project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
     target = tmp_path / "target.txt"
     target.write_text("data\n")
+    base_dir.mkdir(parents=True, exist_ok=True)
     link = base_dir / "file"
     link.symlink_to(target)
 
@@ -690,6 +691,6 @@ manifest_path = "{manifest_path}"
 
     monkeypatch.setattr("dotbak.manager.warnings.warn", fake_warn)
 
-    manager._ensure_writable(link, create_missing=True)
+    manager._ensure_writable(base_dir, create_missing=True)
 
     assert captured

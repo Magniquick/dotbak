@@ -382,10 +382,27 @@ class DotbakManager:
                         )
                     for name in filenames:
                         file_path = dirpath_obj / name
-                        if not os.access(file_path, os.W_OK):
-                            raise DotbakError(
-                                f"Insufficient permissions to modify file '{file_path}'. Run with elevated privileges."
-                            )
+                        if os.access(file_path, os.W_OK):
+                            continue
+                        if file_path.is_symlink():
+                            target = Path(os.readlink(file_path))
+                            target_abs = (file_path.parent / target).resolve(strict=False)
+                            target_writable = os.access(target_abs, os.W_OK)
+                            uid = getattr(file_path.lstat(), "st_uid", None)
+                            getuid = getattr(os, "getuid", None)
+                            user_uid = getuid() if callable(getuid) else None
+                            if not target_writable and uid is not None and user_uid is not None and uid == user_uid:
+                                self._warn_symlink_shadow(file_path, target_abs)
+                                continue
+                            if not target_writable:
+                                raise DotbakError(
+                                    f"Insufficient permissions to modify file '{file_path}'. Run with elevated privileges."
+                                )
+                            self._warn_symlink_shadow(file_path, target_abs)
+                            continue
+                        raise DotbakError(
+                            f"Insufficient permissions to modify file '{file_path}'. Run with elevated privileges."
+                        )
             elif not os.access(path, os.W_OK):
                 if path.is_symlink():
                     target = Path(os.readlink(path))
