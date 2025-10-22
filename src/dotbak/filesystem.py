@@ -7,7 +7,7 @@ import shutil
 from hashlib import blake2b
 from pathlib import Path
 
-from .models import EntryType
+from .models import EntryType, PathMetadata
 
 
 def ensure_parent(path: Path) -> None:
@@ -102,13 +102,15 @@ def _iter_directory(path: Path) -> list[Path]:
     return sorted(entries)
 
 
-def collect_metadata(path: Path, *, entry_type: EntryType | None = None) -> tuple[int, int, int, str | None]:
-    """Return (size, mode, mtime_ns, symlink_target)."""
+def collect_metadata(path: Path, *, entry_type: EntryType | None = None) -> PathMetadata:
+    """Return metadata snapshot for ``path``."""
 
     stat_result = path.lstat()
     entry_type = entry_type or detect_entry_type(path)
     mode = stat_result.st_mode & 0o7777
     mtime_ns = stat_result.st_mtime_ns
+    uid = getattr(stat_result, "st_uid", None)
+    gid = getattr(stat_result, "st_gid", None)
 
     if entry_type == EntryType.FILE:
         size = stat_result.st_size
@@ -120,7 +122,14 @@ def collect_metadata(path: Path, *, entry_type: EntryType | None = None) -> tupl
         size = 0
         target = None
 
-    return size, mode, mtime_ns, target
+    return PathMetadata(
+        size=size,
+        mode=mode,
+        mtime_ns=mtime_ns,
+        symlink_target=target,
+        uid=uid,
+        gid=gid,
+    )
 
 
 def ensure_symlink(source: Path, target: Path) -> bool:

@@ -41,6 +41,8 @@ class Manifest:
                 mtime_ns=item["mtime_ns"],
                 entry_type=EntryType(item["type"]),
                 symlink_target=item.get("symlink_target"),
+                uid=item.get("uid"),
+                gid=item.get("gid"),
             )
 
         return cls(path, entries)
@@ -85,4 +87,8 @@ class Manifest:
         }
         if entry.symlink_target is not None:
             payload["symlink_target"] = entry.symlink_target
+        if entry.uid is not None:
+            payload["uid"] = entry.uid
+        if entry.gid is not None:
+            payload["gid"] = entry.gid
         return payload

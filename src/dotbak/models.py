@@ -37,6 +37,8 @@ class ManifestEntry:
     mtime_ns: int
     entry_type: EntryType
     symlink_target: str | None = None
+    uid: int | None = None
+    gid: int | None = None
 
 
 class ApplyAction(str, Enum):
@@ -73,6 +75,18 @@ class RestoreResult:
     managed: Path
     action: RestoreAction
     details: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PathMetadata:
+    """Metadata captured for a path."""
+
+    size: int
+    mode: int
+    mtime_ns: int
+    symlink_target: str | None
+    uid: int | None
+    gid: int | None
 
 
 class StatusState(str, Enum):

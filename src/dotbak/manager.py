@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -147,15 +148,17 @@ class DotbakManager:
 
             metadata_path = source
 
-        size, mode, mtime_ns, symlink_target = collect_metadata(metadata_path, entry_type=entry_type)
+        metadata = collect_metadata(metadata_path, entry_type=entry_type)
         manifest_entry = ManifestEntry(
             path=managed_path,
             digest=digest,
-            size=size,
-            mode=mode,
-            mtime_ns=mtime_ns,
+            size=metadata.size,
+            mode=metadata.mode,
+            mtime_ns=metadata.mtime_ns,
             entry_type=entry_type,
-            symlink_target=symlink_target,
+            symlink_target=metadata.symlink_target,
+            uid=metadata.uid,
+            gid=metadata.gid,
         )
         self.manifest.upsert(manifest_entry)
 
@@ -246,7 +249,15 @@ class DotbakManager:
                 details="Managed copy missing",
             )
 
+        backup_path: Path | None = None
+        if source.exists() or source.is_symlink():
+            if source.is_symlink():
+                remove_path(source)
+            else:
+                backup_path = self._backup_existing(source)
+
         copy_entry(managed, source)
+        self._apply_manifest_metadata(source, manifest_entry)
 
         if forget:
             self.manifest.remove(manifest_entry)
@@ -257,5 +268,31 @@ class DotbakManager:
             source=source,
             managed=managed,
             action=RestoreAction.RESTORED,
-            details="Removed symlink and restored contents",
+            details=(f"Existing entry backed up to '{backup_path}'" if backup_path else None),
         )
+
+    def _backup_existing(self, path: Path) -> Path:
+        backup_base = path.with_name(f"{path.name}.dotbak-backup")
+        candidate = backup_base
+        counter = 1
+        while candidate.exists():
+            counter += 1
+            candidate = path.with_name(f"{path.name}.dotbak-backup{counter}")
+            if counter > 50:
+                raise DotbakError(
+                    f"Failed to find free backup filename for '{path}'. Please clean up existing backups and retry."
+                )
+        path.rename(candidate)
+        return candidate
+
+    def _apply_manifest_metadata(self, path: Path, manifest_entry: ManifestEntry) -> None:
+        uid = manifest_entry.uid
+        gid = manifest_entry.gid
+        try:
+            if uid is not None or gid is not None:
+                if hasattr(os, "lchown"):
+                    os.lchown(path, uid if uid is not None else -1, gid if gid is not None else -1)  # type: ignore[arg-type]
+        except PermissionError:
+            raise DotbakError(
+                f"Unable to set ownership on '{path}'. Re-run with elevated privileges if ownership matters."
+            ) from None

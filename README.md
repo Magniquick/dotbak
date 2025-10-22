@@ -88,6 +88,8 @@ Restore real files from managed copies (and optionally stop tracking them):
 dotbak restore --config /path/to/dotbak.toml --forget
 ```
 
+If a non-symlink already exists at the destination, dotbak preserves it beside the original as `<name>.dotbak-backup*` before restoring.
+
 Run a health check that exits non-zero when issues are detected:
 
 ```sh
@@ -109,6 +111,7 @@ Tests operate entirely within temporary directories, ensuring your actual dotfil
 - Source code lives under `src/dotbak`; tests reside in `tests/`.
 - Use `uv run pytest` and `uv run black .` for quick validation.
 - Auto-formatting uses Black with `line-length = 120`; enable the git hook via `git config core.hooksPath .githooks`.
+- Manifest entries capture ownership metadata when available. Restoring into privileged paths may require running commands with elevated privileges so ownership can be re-applied.
 
 ## Contributing
 Contributions are welcome! Please open an issue or pull request with your ideas.

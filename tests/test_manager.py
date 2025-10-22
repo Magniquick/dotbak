@@ -209,3 +209,37 @@ manifest_path = "{manifest_path}"
     assert not source_file.is_symlink()
     assert manager.manifest.get("user", Path("wezterm.lua")) is None
     assert not (managed_dir / "user" / "wezterm.lua").exists()
+
+
+def test_restore_backs_up_existing_file(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "wezterm.lua"
+    source_file.write_text("return {}\n")
+
+    config_body = f"""
+[paths]
+user = "{base_dir}"
+
+[groups.user]
+entries = ["wezterm.lua"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    # Replace symlink with a regular file that will be backed up.
+    source_file.unlink()
+    source_file.write_text("manual override\n")
+
+    results = manager.restore()
+    result = results[0]
+    assert result.action is RestoreAction.RESTORED
+    assert result.details is not None and ".dotbak-backup" in result.details
+
+    backups = list(base_dir.glob("wezterm.lua.dotbak-backup*"))
+    assert backups, "Expected a backup file to be created"

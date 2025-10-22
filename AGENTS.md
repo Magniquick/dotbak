@@ -77,6 +77,8 @@ manifest_path = "./managed/manifest.toml"
 - Record key metadata (mode, uid, gid, mtime) inside the manifest for verification.
 - Optionally support extended attributes via `os.listxattr`/`os.setxattr` when available (guarded feature).
 - Detect when entries reside in privileged locations (e.g., `/etc`) and surface actionable errors so the user can rerun commands with elevated privileges.
+- During restore operations, ownership is re-applied via `lchown` where available. Permission errors bubble up as `DotbakError` so the CLI can recommend rerunning with `sudo`.
+- Restore backs up conflicting non-symlink sources as `<name>.dotbak-backup*` before copying managed content back. This keeps user edits safe while avoiding merges.
 
 ## Testing Approach
 - Use `pytest` with `tmp_path` fixtures to simulate file trees and ensure operations behave correctly without touching real dotfiles.
@@ -97,6 +99,6 @@ manifest_path = "./managed/manifest.toml"
 
 ## Next Implementation Steps
 1. Enhance `init` with optional discovery (e.g., suggest common dotfiles) and managed directory bootstrapping.
-2. Add privilege-awareness to the manager/CLI (clear messaging when operations require root) and extend automated tests to cover failure paths.
+2. Detect privilege requirements proactively (e.g., warn when target parent is not writable) and extend automated tests to cover failure paths.
 3. Extend manifest verification (checksum caching, pruning removed entries) and add integration tests that exercise CLI flows end-to-end (apply → status → restore).
-4. Investigate platform-specific metadata support (ownership, extended attributes) behind feature flags.
+4. Investigate platform-specific metadata support (ownership, extended attributes) behind feature flags, including recursive ownership application for directories.

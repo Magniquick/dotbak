@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run Black to auto-format the codebase before commit
-uv run black .
+# Run Black to auto-format the codebase before commit using a repo-local cache
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$PWD/.uv-cache}"
+export UV_TOOL_DIR="${UV_TOOL_DIR:-$PWD/.uv-tools}"
+
+uv run --frozen black .

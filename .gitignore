@@ -146,6 +146,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.uv-cache/
+.uv-tools/
 
 # Spyder project settings
 .spyderproject
