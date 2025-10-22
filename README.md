@@ -39,10 +39,8 @@ See **AGENTS.md** for the in-depth architecture plan and contributor notes.
 Define your dotfiles in `dotbak.toml`:
 
 ```toml
-[paths]
-user_config = "~/.config"
-
 [groups.user_config]
+base = "~/.config"
 entries = [
   "zsh",
   "wezterm.lua",
@@ -53,8 +51,8 @@ managed_root = "./managed"
 manifest_path = "./managed/manifest.toml"
 ```
 
-- `paths` maps logical group names to base directories.
-- Each `groups.<name>` table lists relative paths beneath its base.
+- Each `[groups.<name>]` table defines a `base` path along with the relative entries to manage.
+- You can point multiple entries in different locations to the same group by setting `base = "~"`, etc.
 - `settings` configures where dotbak stores managed files and its manifest.
 
 > [!IMPORTANT]

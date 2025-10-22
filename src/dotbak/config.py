@@ -117,13 +117,10 @@ def load_config(path: Path | None = None) -> Config:
     with config_path.open("rb") as handle:
         data = tomllib.load(handle)
 
-    paths_section = data.get("paths")
-    if not paths_section:
-        raise ConfigError("Configuration must define a [paths] section")
-
-    base_paths: Dict[str, Path] = {}
-    for name, raw_value in paths_section.items():
-        base_paths[name] = _expand_path(raw_value, base_dir=base_dir)
+    paths_section = data.get("paths") or {}
+    base_paths: Dict[str, Path] = {
+        name: _expand_path(raw_value, base_dir=base_dir) for name, raw_value in paths_section.items()
+    }
 
     groups_section = data.get("groups")
     if not groups_section:
@@ -131,10 +128,12 @@ def load_config(path: Path | None = None) -> Config:
 
     groups: Dict[str, GroupConfig] = {}
     for group_name, group_body in groups_section.items():
-        try:
-            base_path = base_paths[group_name]
-        except KeyError as exc:
-            raise ConfigError(f"Group '{group_name}' is missing a base path entry under [paths]") from exc
+        base_raw = group_body.get("base") or paths_section.get(group_name)
+        if base_raw is None:
+            raise ConfigError(
+                f"Group '{group_name}' must define a 'base' setting or have a matching entry under [paths]"
+            )
+        base_path = _expand_path(base_raw, base_dir=base_dir)
         groups[group_name] = GroupConfig.from_raw(group_name, base_path, group_body)
 
     settings = Settings.from_raw(data.get("settings", {}), base_dir=base_dir)

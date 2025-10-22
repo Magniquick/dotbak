@@ -37,18 +37,15 @@ dotbak/
 ## Configuration Shape
 ```toml
 # dotbak.toml
-[paths]
-# logical name = base path
-user_config = "~/.config"
-system_dots = "/etc"
-
 [groups.user_config]
+base = "~/.config"
 entries = [
   "zsh",          # directory → ~/.config/zsh → managed/user_config/zsh
   "wezterm.lua",  # file → ~/.config/wezterm.lua → managed/user_config/wezterm.lua
 ]
 
 [groups.system_dots]
+base = "/etc"
 entries = [
   "ssh/sshd_config",
 ]

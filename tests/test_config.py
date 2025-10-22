@@ -18,10 +18,8 @@ def test_load_config_happy_path(tmp_path: Path, fake_home: Path) -> None:
     config_path = _write_config(
         tmp_path,
         """
-        [paths]
-        user_config = "~/dotbak-config"
-
         [groups.user_config]
+        base = "~/dotbak-config"
         entries = ["zsh", "wezterm.lua"]
 
         [settings]
@@ -44,10 +42,8 @@ def test_load_config_with_override_manifest(tmp_path: Path, fake_home: Path) -> 
     config_path = _write_config(
         tmp_path,
         """
-        [paths]
-        user_config = "./relative/base"
-
         [groups.user_config]
+        base = "./relative/base"
         entries = ["dotfile"]
 
         [settings]
@@ -69,9 +65,6 @@ def test_missing_group_base_path_raises(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         """
-        [paths]
-        user_config = "./config"
-
         [groups.missing]
         entries = ["file"]
         """,
@@ -85,10 +78,8 @@ def test_absolute_entry_rejected(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         """
-        [paths]
-        user_config = "./config"
-
         [groups.user_config]
+        base = "./config"
         entries = ["/etc/passwd"]
         """,
     )
@@ -103,10 +94,8 @@ def test_directory_argument_resolves_default_file(tmp_path: Path) -> None:
     _write_config(
         config_dir,
         """
-        [paths]
-        user_config = "./base"
-
         [groups.user_config]
+        base = "./base"
         entries = ["file"]
         """,
     )
@@ -114,3 +103,22 @@ def test_directory_argument_resolves_default_file(tmp_path: Path) -> None:
     config = load_config(config_dir)
 
     assert config.config_path == (config_dir / DEFAULT_CONFIG_FILENAME).resolve(strict=False)
+
+
+def test_load_config_legacy_paths_section_supported(tmp_path: Path, fake_home: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        """
+        [paths]
+        user_config = "~/dotbak-config"
+
+        [groups.user_config]
+        entries = ["zsh"]
+        """,
+    )
+
+    config = load_config(config_path)
+
+    group = config.group("user_config")
+    assert group.base_path == fake_home / "dotbak-config"
+    assert group.entries == (Path("zsh"),)

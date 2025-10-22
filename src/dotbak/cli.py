@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 import tomli_w
 
-from .config import DEFAULT_CONFIG_FILENAME, load_config
+from .config import DEFAULT_CONFIG_FILENAME, ConfigError, load_config
 from .manager import DotbakError, DotbakManager
 from .models import (
     ApplyResult,
@@ -36,10 +36,20 @@ def _load_manager(config: Path | None) -> DotbakManager:
 def _handle_error(exc: Exception) -> None:
     if isinstance(exc, PermissionError):
         console.print("[red]Permission denied.[/red] Re-run the command with elevated privileges (e.g. `sudo`).")
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=1)
+    if isinstance(exc, ConfigError):
+        message = str(exc)
+        console.print(f"[red]{message}[/red]")
+        if "does not exist" in message:
+            console.print("[yellow]Use 'dotbak init --config <path>' to create a configuration file.[/yellow]")
+        elif "Expected to find" in message:
+            console.print(
+                "[yellow]Make sure you pointed to the directory containing the config file, or to the file itself.[/yellow]"
+            )
+        raise typer.Exit(code=1)
     if isinstance(exc, DotbakError):
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=1)
     raise exc
 
 

@@ -32,10 +32,8 @@ def test_apply_initial_and_idempotent(tmp_path: Path) -> None:
     source_file.write_text("return {}\n")
 
     config_body = f"""
-[paths]
-user = "{base_dir}"
-
 [groups.user]
+base = "{base_dir}"
 entries = ["wezterm.lua"]
 
 [settings]
@@ -68,10 +66,8 @@ def test_apply_updates_when_source_changes(tmp_path: Path) -> None:
     source_file.write_text("return {}\n")
 
     config_body = f"""
-[paths]
-user = "{base_dir}"
-
 [groups.user]
+base = "{base_dir}"
 entries = ["wezterm.lua"]
 
 [settings]
@@ -107,10 +103,8 @@ def test_status_reports_sync_and_drift(tmp_path: Path) -> None:
     source_file.write_text("return {}\n")
 
     config_body = f"""
-[paths]
-user = "{base_dir}"
-
 [groups.user]
+base = "{base_dir}"
 entries = ["wezterm.lua"]
 
 [settings]
@@ -145,10 +139,8 @@ def test_status_marks_orphaned_entries(tmp_path: Path) -> None:
     source_file.write_text("return {}\n")
 
     config_body = f"""
-[paths]
-user = "{base_dir}"
-
 [groups.user]
+base = "{base_dir}"
 entries = ["wezterm.lua"]
 
 [settings]
@@ -165,10 +157,8 @@ manifest_path = "{manifest_path}"
     new_config_dir.mkdir(parents=True)
 
     new_config_body = f"""
-[paths]
-other = "{base_dir}"
-
 [groups.other]
+base = "{base_dir}"
 entries = ["dummy"]
 
 [settings]
@@ -189,10 +179,8 @@ def test_restore_forget_removes_manifest(tmp_path: Path) -> None:
     source_file.write_text("return {}\n")
 
     config_body = f"""
-[paths]
-user = "{base_dir}"
-
 [groups.user]
+base = "{base_dir}"
 entries = ["wezterm.lua"]
 
 [settings]
@@ -217,10 +205,8 @@ def test_restore_backs_up_existing_file(tmp_path: Path) -> None:
     source_file.write_text("return {}\n")
 
     config_body = f"""
-[paths]
-user = "{base_dir}"
-
 [groups.user]
+base = "{base_dir}"
 entries = ["wezterm.lua"]
 
 [settings]
