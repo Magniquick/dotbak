@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -389,7 +390,14 @@ class DotbakManager:
                 if path.is_symlink():
                     target = Path(os.readlink(path))
                     target_abs = (path.parent / target).resolve(strict=False)
-                    if not os.access(target_abs, os.W_OK):
+                    target_writable = os.access(target_abs, os.W_OK)
+                    uid = getattr(path.lstat(), "st_uid", None)
+                    getuid = getattr(os, "getuid", None)
+                    user_uid = getuid() if callable(getuid) else None
+                    if not target_writable and uid is not None and user_uid is not None and uid == user_uid:
+                        self._warn_symlink_shadow(path, target_abs)
+                        return
+                    if not target_writable:
                         raise DotbakError(f"Insufficient permissions to modify '{path}'. Run with elevated privileges.")
                     self._warn_symlink_shadow(path, target_abs)
                     return
@@ -401,7 +409,8 @@ class DotbakManager:
                 )
 
     def _warn_symlink_shadow(self, path: Path, target: Path) -> None:
-        console.print(
-            "[yellow]Warning:[/yellow] shadowing existing symlink '"
-            f"{path}' pointing to '{target}'. dotbak will manage a copy."
+        warnings.warn(
+            f"shadowing existing symlink '{path}' pointing to '{target}'. dotbak will manage a copy.",
+            category=UserWarning,
+            stacklevel=2,
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 
 import pytest
@@ -651,3 +652,44 @@ manifest_path = "{manifest_path}"
 
     with pytest.raises(DotbakError):
         manager._ensure_writable(target, create_missing=True)
+
+
+def test_ensure_writable_symlink_shadow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    target = tmp_path / "target.txt"
+    target.write_text("data\n")
+    link = base_dir / "file"
+    link.symlink_to(target)
+
+    config_path = _write_config(
+        project_dir,
+        f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+""",
+    )
+
+    manager = DotbakManager(load_config(config_path))
+
+    def fake_access(path, mode):
+        path = Path(path)
+        if path in {link, target}:
+            return False
+        return True
+
+    monkeypatch.setattr("dotbak.manager.os.access", fake_access)
+    captured: list[str] = []
+
+    def fake_warn(message, **_kwargs):
+        captured.append(message)
+
+    monkeypatch.setattr("dotbak.manager.warnings.warn", fake_warn)
+
+    manager._ensure_writable(link, create_missing=True)
+
+    assert captured
