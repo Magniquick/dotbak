@@ -9,21 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import tomli_w
 import typer
 from rich.console import Console
 from rich.table import Table
-import tomli_w
 
 from .config import DEFAULT_CONFIG_FILENAME, ConfigError, load_config
 from .manager import DotbakError, DotbakManager
-from .models import (
-    ApplyResult,
-    ManagedPath,
-    RestoreResult,
-    StatusEntry,
-    StatusReport,
-    StatusState,
-)
+from .models import ApplyResult, ManagedPath, RestoreResult, StatusEntry, StatusReport, StatusState
 
 app = typer.Typer(help="Metadata-preserving dotfiles backup manager")
 console = Console()
