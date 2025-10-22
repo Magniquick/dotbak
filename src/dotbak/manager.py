@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-import uuid
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -376,25 +375,31 @@ class DotbakManager:
             shutil.copytree(managed, destination, symlinks=True, copy_function=shutil.copy2)
             return
 
-        temp_dir = destination.parent / f".{destination.name}.dotbak-tmp-{uuid.uuid4().hex}"
-        try:
+        backup: Path | None = None
+        prefix = f".{destination.name}.dotbak-tmp-"
+        with tempfile.TemporaryDirectory(prefix=prefix, dir=destination.parent) as staging_root_name:
+            staging_root = Path(staging_root_name)
+            temp_dir = staging_root / "payload"
             shutil.copytree(managed, temp_dir, symlinks=True, copy_function=shutil.copy2)
-            backup = destination.parent / f".{destination.name}.dotbak-backup"
-            counter = 1
-            while backup.exists():
-                counter += 1
-                backup = destination.parent / f".{destination.name}.dotbak-backup{counter}"
 
-            os.rename(destination, backup)
+            if destination.exists():
+                backup = destination.parent / f".{destination.name}.dotbak-backup"
+                counter = 1
+                while backup.exists():
+                    counter += 1
+                    backup = destination.parent / f".{destination.name}.dotbak-backup{counter}"
+
+                destination.rename(backup)
+
             try:
-                os.rename(temp_dir, destination)
+                temp_dir.replace(destination)
             except Exception:
-                os.rename(backup, destination)
+                if backup and backup.exists():
+                    backup.replace(destination)
                 raise
+
+        if backup and backup.exists():
             shutil.rmtree(backup, ignore_errors=True)
-        finally:
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _apply_manifest_metadata(self, path: Path, manifest_entry: ManifestEntry) -> None:
         uid = manifest_entry.uid
