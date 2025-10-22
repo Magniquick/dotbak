@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run Black to auto-format the codebase before commit using a repo-local cache
+# Run Black to auto-format staged Python files before commit using repo-local caches.
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$PWD/.uv-cache}"
 export UV_TOOL_DIR="${UV_TOOL_DIR:-$PWD/.uv-tools}"
 
-uv run --frozen black .
+PY_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
+
+if [ -z "$PY_FILES" ]; then
+  exit 0
+fi
+
+echo "Formatting staged Python files with Black..."
+uv run --frozen black $PY_FILES
+
+# Re-stage any files Black rewrote.
+echo "$PY_FILES" | while read -r file; do
+  if [ -n "$file" ] && [ -f "$file" ]; then
+    git add "$file"
+  fi
+done
