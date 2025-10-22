@@ -76,6 +76,7 @@ manifest_path = "./managed/manifest.toml"
 - Detect when entries reside in privileged locations (e.g., `/etc`) and surface actionable errors so the user can rerun commands with elevated privileges.
 - During restore operations, ownership is re-applied via `lchown` where available. Permission errors bubble up as `DotbakError` so the CLI can recommend rerunning with `sudo`.
 - Restore backs up conflicting non-symlink sources as `<name>.dotbak-backup*` before copying managed content back. This keeps user edits safe while avoiding merges.
+- Preflight checks verify write access to all managed sources (including directory contents). Users can bypass with `--force`, but operations may still fail if the OS rejects writes at runtime.
 
 ## Testing Approach
 - Use `pytest` with `tmp_path` fixtures to simulate file trees and ensure operations behave correctly without touching real dotfiles.

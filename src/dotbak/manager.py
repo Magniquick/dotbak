@@ -43,14 +43,15 @@ class DotbakManager:
         self.manifest = Manifest.load(config.settings.manifest_path)
         self.config.settings.managed_root.mkdir(parents=True, exist_ok=True)
 
-    def apply(self, groups: Iterable[str] | None = None) -> list[ApplyResult]:
+    def apply(self, groups: Iterable[str] | None = None, *, force: bool = False) -> list[ApplyResult]:
         selected = self._select_groups(groups)
         results: list[ApplyResult] = []
 
         for group in selected:
             for entry in group.entries:
                 source = group.source_path(entry)
-                self._ensure_writable(source)
+                if not force:
+                    self._ensure_writable(source, create_missing=True)
                 results.append(self._apply_entry(group, entry))
 
         self.manifest.save()
@@ -80,14 +81,36 @@ class DotbakManager:
         entries.sort(key=lambda item: item.path.key())
         return StatusReport(entries=tuple(entries))
 
-    def restore(self, groups: Iterable[str] | None = None, *, forget: bool = False) -> list[RestoreResult]:
+    def permission_issues(self, groups: Iterable[str] | None = None) -> list[tuple[ManagedPath, str]]:
+        issues: list[tuple[ManagedPath, str]] = []
+        selected = self._select_groups(groups)
+
+        for group in selected:
+            for entry in group.entries:
+                managed_path = ManagedPath(group.name, entry)
+                source = group.source_path(entry)
+                try:
+                    self._ensure_writable(source, create_missing=False)
+                except DotbakError as exc:
+                    issues.append((managed_path, str(exc)))
+
+        return issues
+
+    def restore(
+        self,
+        groups: Iterable[str] | None = None,
+        *,
+        forget: bool = False,
+        force: bool = False,
+    ) -> list[RestoreResult]:
         selected = self._select_groups(groups)
         results: list[RestoreResult] = []
 
         for group in selected:
             for entry in group.entries:
                 source = group.source_path(entry)
-                self._ensure_writable(source)
+                if not force:
+                    self._ensure_writable(source, create_missing=True)
                 results.append(self._restore_entry(group, entry, forget=forget))
 
         if forget:
@@ -301,23 +324,46 @@ class DotbakManager:
                 f"Unable to set ownership on '{path}'. Re-run with elevated privileges if ownership matters."
             ) from None
 
-    def _ensure_writable(self, path: Path) -> None:
+    def _ensure_writable(self, path: Path, *, create_missing: bool) -> None:
         parent = path.parent
+        existing_ancestor = parent
+        while not existing_ancestor.exists() and existing_ancestor != existing_ancestor.parent:
+            existing_ancestor = existing_ancestor.parent
+
+        if not os.access(existing_ancestor, os.W_OK | os.X_OK):
+            raise DotbakError(
+                f"Cannot write to ancestor directory '{existing_ancestor}' for '{path}'. Run with elevated privileges."
+            )
+
         if not parent.exists():
-            try:
-                parent.mkdir(parents=True, exist_ok=True)
+            if create_missing:
+                try:
+                    parent.mkdir(parents=True, exist_ok=True)
+                except PermissionError as exc:
+                    raise DotbakError(
+                        f"Cannot create parent directory '{parent}' for '{path}'. Run with elevated privileges."
+                    ) from exc
+            else:
                 return
-            except PermissionError as exc:
-                raise DotbakError(
-                    f"Cannot create parent directory '{parent}' for '{path}'. Run with elevated privileges."
-                ) from exc
 
         if path.exists() or path.is_symlink():
-            if os.access(path, os.W_OK):
-                return
-            raise DotbakError(f"Insufficient permissions to modify '{path}'. Run with elevated privileges.")
-
-        if not os.access(parent, os.W_OK):
-            raise DotbakError(
-                f"Cannot write to parent directory '{parent}' for '{path}'. Run with elevated privileges."
-            )
+            if path.is_dir() and not path.is_symlink():
+                for dirpath, dirnames, filenames in os.walk(path):
+                    dirpath_obj = Path(dirpath)
+                    if not os.access(dirpath_obj, os.W_OK | os.X_OK):
+                        raise DotbakError(
+                            f"Insufficient permissions to modify directory '{dirpath_obj}'. Run with elevated privileges."
+                        )
+                    for name in filenames:
+                        file_path = dirpath_obj / name
+                        if not os.access(file_path, os.W_OK):
+                            raise DotbakError(
+                                f"Insufficient permissions to modify file '{file_path}'. Run with elevated privileges."
+                            )
+            elif not os.access(path, os.W_OK):
+                raise DotbakError(f"Insufficient permissions to modify '{path}'. Run with elevated privileges.")
+        else:
+            if not os.access(parent, os.W_OK | os.X_OK):
+                raise DotbakError(
+                    f"Cannot write to parent directory '{parent}' for '{path}'. Run with elevated privileges."
+                )

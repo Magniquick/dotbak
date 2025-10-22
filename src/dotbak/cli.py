@@ -18,6 +18,7 @@ from .config import DEFAULT_CONFIG_FILENAME, ConfigError, load_config
 from .manager import DotbakError, DotbakManager
 from .models import (
     ApplyResult,
+    ManagedPath,
     RestoreResult,
     StatusEntry,
     StatusReport,
@@ -51,7 +52,9 @@ def _handle_error(exc: Exception) -> None:
         console.print(f"[red]{exc}[/red]")
         lowered = str(exc).lower()
         if "insufficient permissions" in lowered or "elevated privileges" in lowered:
-            console.print("[yellow]Tip: try rerunning with `sudo` or grant write access to the target directories.[/yellow]")
+            console.print(
+                "[yellow]Tip: try rerunning with `sudo` or grant write access to the target directories.[/yellow]"
+            )
         raise typer.Exit(code=1)
     raise exc
 
@@ -96,6 +99,18 @@ def _format_status(report: StatusReport) -> None:
             f"[{style}]{entry.state.value}[/{style}]",
             entry.details or "",
         )
+
+    console.print(table)
+
+
+def _format_permission_issues(issues: Iterable[tuple[ManagedPath, str]]) -> None:
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Group")
+    table.add_column("Entry")
+    table.add_column("Reason", overflow="fold")
+
+    for managed_path, reason in issues:
+        table.add_row(managed_path.group, managed_path.relative_path.as_posix(), reason)
 
     console.print(table)
 
@@ -300,12 +315,17 @@ def init(
 def apply(
     config: Path | None = typer.Option(None, "--config", "-c", help="Path to dotbak.toml"),
     group: list[str] = typer.Option(None, "--group", "-g", help="Limit to specific group(s)"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Skip permission preflight checks (use with caution)",
+    ),
 ) -> None:
     """Backup files into the managed directory and create symlinks."""
 
     try:
         manager = _load_manager(config)
-        results = manager.apply(group or None)
+        results = manager.apply(group or None, force=force)
         _format_apply_results(results)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
@@ -339,12 +359,17 @@ def restore(
         "--forget",
         help="Remove restored entries from the manifest and delete managed copies",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Skip permission preflight checks (use with caution)",
+    ),
 ) -> None:
     """Replace symlinks with real files from the managed copies."""
 
     try:
         manager = _load_manager(config)
-        results = manager.restore(group or None, forget=forget)
+        results = manager.restore(group or None, forget=forget, force=force)
         _format_restore_results(results)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
@@ -362,9 +387,18 @@ def doctor(
         report = manager.status(group or None)
         _format_status(report)
         has_issues = any(entry.state is not StatusState.IN_SYNC for entry in report.entries)
-        if has_issues:
-            console.print("[red]Issues detected. Resolve them or run 'dotbak apply' before proceeding.[/red]")
+
+        perm_issues = manager.permission_issues(group or None)
+        if perm_issues:
+            console.print("[yellow]Permission preflight warnings:[/yellow]")
+            _format_permission_issues(perm_issues)
+
+        if has_issues or perm_issues:
+            console.print(
+                "[red]Issues detected. Resolve them or run 'dotbak apply --force' after reviewing warnings.[/red]"
+            )
             raise typer.Exit(code=1)
+
         console.print("[green]All managed entries are healthy.[/green]")
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)

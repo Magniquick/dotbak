@@ -76,6 +76,12 @@ Back up entries and create symlinks:
 dotbak apply --config /path/to/dotbak.toml
 ```
 
+If you know you have the right permissions, `--force` skips the safety checks:
+
+```sh
+dotbak apply --config /path/to/dotbak.toml --force
+```
+
 Check the current state of managed entries:
 
 ```sh
@@ -95,6 +101,8 @@ Run a health check that exits non-zero when issues are detected:
 ```sh
 dotbak doctor --config /path/to/dotbak.toml
 ```
+
+`dotbak doctor` also surfaces permission preflight warnings so you know when a command will require elevated privileges.
 
 Pass `--group` multiple times to target specific groups. See `AGENTS.md` for the roadmap and deeper implementation notes.
 

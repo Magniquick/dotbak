@@ -237,7 +237,7 @@ def test_apply_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text("data\n")
 
-    monkeypatch.setattr("os.access", lambda path, mode: False)
+    monkeypatch.setattr("dotbak.manager.os.access", lambda path, mode: False)
 
     config_body = f"""
 [groups.user]
@@ -254,3 +254,63 @@ manifest_path = "{manifest_path}"
 
     with pytest.raises(DotbakError):
         manager.apply()
+
+
+def test_apply_force_skips_permission_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    target_file = base_dir / "file"
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text("data\n")
+
+    monkeypatch.setattr("dotbak.manager.os.access", lambda path, mode: False)
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+
+    manager.apply(force=True)
+
+
+def test_apply_directory_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    dir_entry = base_dir / "dir"
+    dir_entry.mkdir(parents=True)
+    blocked_file = dir_entry / "blocked"
+    blocked_file.write_text("data\n")
+
+    def fake_access(path, mode):
+        if Path(path) == blocked_file:
+            return False
+        if Path(path) == dir_entry:
+            return False
+        return True
+
+    monkeypatch.setattr("dotbak.manager.os.access", fake_access)
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["dir"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+
+    with pytest.raises(DotbakError):
+        manager.apply()
+
+    issues = manager.permission_issues()
+    assert issues
