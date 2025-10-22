@@ -233,6 +233,19 @@ class DotbakManager:
                 details="Source path is missing",
             )
 
+        metadata_target = managed if manifest_entry.entry_type != EntryType.SYMLINK else source
+        current_metadata = collect_metadata(metadata_target, entry_type=manifest_entry.entry_type)
+        if (
+            current_metadata.mode != manifest_entry.mode
+            or current_metadata.uid != manifest_entry.uid
+            or current_metadata.gid != manifest_entry.gid
+        ):
+            return StatusEntry(
+                path=managed_path,
+                state=StatusState.METADATA_DIFFER,
+                details="File metadata differs from manifest",
+            )
+
         if not source.is_symlink():
             return StatusEntry(
                 path=managed_path,

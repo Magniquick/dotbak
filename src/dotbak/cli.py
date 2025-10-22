@@ -82,6 +82,7 @@ def _format_status(report: StatusReport) -> None:
         StatusState.MANAGED_MISSING: "red",
         StatusState.CONTENT_DIFFER: "red",
         StatusState.ORPHANED: "yellow",
+        StatusState.METADATA_DIFFER: "red",
     }
 
     for entry in report.entries:

@@ -508,6 +508,32 @@ manifest_path = "{manifest_path}"
     assert result[0].action is ApplyAction.SKIPPED
 
 
+def test_status_metadata_difference(tmp_path: Path) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    managed_file = managed_dir / "user" / "file"
+    os.chmod(managed_file, 0o700)
+
+    report = manager.status()
+    assert report.entries[0].state is StatusState.METADATA_DIFFER
+
+
 def test_restore_skips_when_managed_missing(tmp_path: Path) -> None:
     project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
     source_file = base_dir / "file"

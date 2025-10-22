@@ -98,6 +98,7 @@ class StatusState(str, Enum):
     MANAGED_MISSING = "managed_missing"
     CONTENT_DIFFER = "content_different"
     ORPHANED = "orphaned"
+    METADATA_DIFFER = "metadata_different"
 
 
 @dataclass(frozen=True, slots=True)
