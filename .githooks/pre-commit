@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run Black to auto-format staged Python files before commit using repo-local caches.
+# Run Black and isort to auto-format staged Python files before commit using repo-local caches.
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$PWD/.uv-cache}"
 export UV_TOOL_DIR="${UV_TOOL_DIR:-$PWD/.uv-tools}"
 
@@ -10,6 +10,9 @@ PY_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || 
 if [ -z "$PY_FILES" ]; then
   exit 0
 fi
+
+echo "Sorting imports with isort..."
+uv run --frozen isort $PY_FILES
 
 echo "Formatting staged Python files with Black..."
 uv run --frozen black $PY_FILES
