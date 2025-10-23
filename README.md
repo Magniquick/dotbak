@@ -1,5 +1,7 @@
 # dotbak 🗂️
 
+![Screenshot](./.github/screenshot.png)
+
 ## Overview
 **dotbak** is a Python-powered dotfiles backup manager that mirrors your configuration files into a managed directory, preserving metadata and replacing originals with symlinks. It focuses on reliable backups over templating to keep your setup portable without surprises.
 
@@ -17,23 +19,14 @@ See **AGENTS.md** for the in-depth architecture plan and contributor notes.
 
 ## Requirements
 - Python 3.13+
-- [uv](https://github.com/astral-sh/uv) (recommended) for dependency and virtual environment management.
+- [uv](https://github.com/astral-sh/uv) (highly recommended) for dependency and virtual environment management.
 
 ## Setup
-1. Clone the repository and enter the project directory:
-   ```sh
-   git clone <repo-url>
-   cd dotbak
-   ```
-
-2. Create the virtual environment and install dependencies:
-   ```sh
-   uv venv
-   uv sync
-   ```
-
-> [!NOTE]
-> uv will provision a `.venv` directory. Adjust your editor or shell to use it automatically.
+Use uv to get dotbak -
+```bash
+uv tool install --from git+https://github.com/Magniquick/dotbak dotbak
+```
+that's it.
 
 ## Configuration
 Define your dotfiles in `dotbak.toml`:
@@ -65,7 +58,7 @@ manifest_path = "./managed/manifest.toml"
 Initialize a starter config:
 
 ```sh
-dotbak init --config ./dotbak.toml
+dotbak init
 ```
 
 Add `--discover GROUP=PATH` (repeatable) to pre-populate entries from existing directories, and `--bootstrap-managed` to create the managed tree immediately.
@@ -74,7 +67,7 @@ Prefer a guided experience? Use `dotbak init --interactive` to add groups and en
 Back up entries and create symlinks:
 
 ```sh
-dotbak apply --config /path/to/dotbak.toml
+dotbak apply
 ```
 
 If you know you have the right permissions, `--force` skips the safety checks:
@@ -86,13 +79,13 @@ dotbak apply --config /path/to/dotbak.toml --force
 Check the current state of managed entries:
 
 ```sh
-dotbak status --config /path/to/dotbak.toml
+dotbak status
 ```
 
 Restore real files from managed copies (and optionally stop tracking them):
 
 ```sh
-dotbak restore --config /path/to/dotbak.toml --forget
+dotbak restore --forget
 ```
 
 If a non-symlink already exists at the destination, dotbak preserves it beside the original as `<name>.dotbak-backup*` before restoring.
@@ -100,7 +93,7 @@ If a non-symlink already exists at the destination, dotbak preserves it beside t
 Run a health check that exits non-zero when issues are detected:
 
 ```sh
-dotbak doctor --config /path/to/dotbak.toml
+dotbak doctor
 ```
 
 `dotbak doctor` also surfaces permission preflight warnings so you know when a command will require elevated privileges.
@@ -130,4 +123,4 @@ Contributions are welcome! Please open an issue or pull request with your ideas.
 > Use `uv sync --dev` to install development dependencies before hacking on features or tests.
 
 ## License
-Project licensing is TBD. Until finalized, treat the repository as all-rights-reserved.
+GPL v3.

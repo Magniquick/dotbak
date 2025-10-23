@@ -4,7 +4,7 @@
 - Provide a simple CLI for backing up dotfiles by mirroring them into a managed directory and symlinking originals back to the managed copies.
 - Preserve file metadata (permissions, modified times, symlinks) so that backed-up copies are bit-for-bit equivalent to their sources whenever possible.
 - Use TOML configuration to describe logical groups of dotfiles, each anchored at a base path (for example `user_config` → `~/.config`).
-- Prefer Python's `pathlib` API for path handling to keep the implementation portable and expressive.
+- Prefer Python's `pathlib` API for path handling to keep the implementation portable and expressive. 
 - Avoid templating or complex state tracking beyond what is needed to keep local files and their managed copies in sync.
 
 ## High-Level Flow
@@ -89,8 +89,8 @@ manifest_path = "./managed/manifest.toml"
 - Run the test suite with `uv run pytest` to leverage the managed virtual environment.
 - Configuration parsing is implemented in `src/dotbak/config.py` with Pydantic-based validation.
 - Tests stub the home directory to a temporary path so no operations touch the real filesystem.
-- Auto-formatting uses Black (`line-length = 120`). Developers can enable the bundled hook with `git config core.hooksPath .githooks`.
-- Pre-commit is configured with local `uv`-powered hooks (`isort`, `black`). Run `uv run pre-commit run --all-files` during CI or before large refactors.
+- Auto-formatting uses Black (`line-length = 120`).
+- Pre-commit is configured with local `uv`-powered hooks (`isort`, `black`). Auto-runs as a git hook on `git commit`.
 
 ## Reference Material
 - `agent_docs/pathlib.txt` contains a local copy of the Python `pathlib` documentation.
