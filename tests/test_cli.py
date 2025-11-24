@@ -4,6 +4,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import tomli_w
 from typer.testing import CliRunner
 
 from dotbak import cli as cli_module
@@ -119,6 +120,7 @@ def test_cli_init_and_doctor(tmp_path: Path, fake_home: Path) -> None:
     doctor_result = runner.invoke(app, ["doctor", "--config", str(config_path)])
     assert doctor_result.exit_code == 1
     assert "not_tracked" in doctor_result.stdout
+    assert "Warning: configuration directory is not inside a Git repository" in doctor_result.stdout
 
 
 def test_cli_init_interactive(tmp_path: Path, fake_home: Path) -> None:
@@ -219,6 +221,307 @@ def test_cli_apply_handles_dotbak_error(monkeypatch: pytest.MonkeyPatch) -> None
     assert "Tip: try rerunning with `sudo`" in result.stdout
 
 
+def test_cli_add_adds_entry(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    base = project / "base"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+    base.mkdir(parents=True)
+    managed.mkdir(parents=True)
+
+    (base / "existing").write_text("data\n")
+    new_path = base / "new" / "config.txt"
+    new_path.parent.mkdir(parents=True)
+    new_path.write_text("hello\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base}"
+entries = ["existing"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+
+    config_path = _write_config(project, config_body)
+
+    result = runner.invoke(app, ["add", str(new_path), "--config", str(config_path)])
+    assert result.exit_code == 0
+    data = tomllib.loads(config_path.read_text())
+    assert data["groups"]["user"]["entries"] == ["existing", "new/config.txt"]
+
+
+def test_cli_add_prompts_for_group(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    base = project / "base"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+    base.mkdir(parents=True)
+    managed.mkdir(parents=True)
+
+    target_path = base / "shared"
+    target_path.mkdir()
+
+    config_body = f"""
+[groups.alpha]
+base = "{base}"
+entries = ["existing_a"]
+
+[groups.beta]
+base = "{base}"
+entries = ["existing_b"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+
+    config_path = _write_config(project, config_body)
+
+    result = runner.invoke(
+        app,
+        ["add", str(target_path), "--config", str(config_path)],
+        input="2\n",
+    )
+    assert result.exit_code == 0
+    data = tomllib.loads(config_path.read_text())
+    assert data["groups"]["beta"]["entries"] == ["existing_b", "shared"]
+
+
+def test_cli_remove_restores_entry(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    base = project / "base"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+    base.mkdir(parents=True)
+    managed.mkdir(parents=True)
+
+    keep_path = base / "keep"
+    remove_path = base / "remove"
+    keep_path.write_text("keep\n")
+    remove_path.write_text("remove\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base}"
+entries = ["keep", "remove"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+
+    config_path = _write_config(project, config_body)
+
+    apply_result = runner.invoke(app, ["apply", "--config", str(config_path)])
+    assert apply_result.exit_code == 0
+
+    remove_result = runner.invoke(app, ["remove", str(remove_path), "--config", str(config_path)])
+    assert remove_result.exit_code == 0
+    assert "Removed" in remove_result.stdout
+
+    data = tomllib.loads(config_path.read_text())
+    assert data["groups"]["user"]["entries"] == ["keep"]
+
+    assert remove_path.exists()
+    assert remove_path.is_file()
+    assert not remove_path.is_symlink()
+    assert remove_path.read_text() == "remove\n"
+
+    manifest_obj = Manifest.load(manifest)
+    assert manifest_obj.get("user", Path("remove")) is None
+    assert manifest_obj.get("user", Path("keep")) is not None
+
+
+def test_cli_remove_missing_source(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    base = project / "base"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+    base.mkdir(parents=True)
+    managed.mkdir(parents=True)
+
+    missing_path = base / "missing"
+    missing_path.write_text("data\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base}"
+entries = ["missing"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+
+    config_path = _write_config(project, config_body)
+    runner.invoke(app, ["apply", "--config", str(config_path)])
+
+    missing_path.unlink()
+
+    result = runner.invoke(app, ["remove", str(missing_path), "--config", str(config_path)])
+    assert result.exit_code == 0
+    if config_path.exists():
+        data = tomllib.loads(config_path.read_text())
+        assert data.get("groups", {}).get("user", {}).get("entries", []) == []
+    manifest_obj = Manifest.load(manifest)
+    assert manifest_obj.get("user", Path("missing")) is None
+
+
+def test_cli_orphan_lists(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    base = project / "base"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+    base.mkdir(parents=True)
+    managed.mkdir(parents=True)
+
+    track_path = base / "tracked"
+    orphan_path = base / "orphan"
+    track_path.write_text("tracked\n")
+    orphan_path.write_text("orphan\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base}"
+entries = ["tracked", "orphan"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+
+    config_path = _write_config(project, config_body)
+    runner.invoke(app, ["apply", "--config", str(config_path)])
+
+    data = tomllib.loads(config_path.read_text())
+    data["groups"]["user"]["entries"] = ["tracked"]
+    config_path.write_text(tomli_w.dumps(data))
+
+    result = runner.invoke(app, ["orphan", "--config", str(config_path)])
+    assert result.exit_code == 1
+    assert "orphan" in result.stdout
+    assert "Use 'dotbak orphan --prune'" in result.stdout
+
+
+def test_cli_orphan_prune(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    base = project / "base"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+    base.mkdir(parents=True)
+    managed.mkdir(parents=True)
+
+    track_path = base / "tracked"
+    orphan_path = base / "orphan"
+    track_path.write_text("tracked\n")
+    orphan_path.write_text("orphan\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base}"
+entries = ["tracked", "orphan"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+
+    config_path = _write_config(project, config_body)
+    runner.invoke(app, ["apply", "--config", str(config_path)])
+
+    data = tomllib.loads(config_path.read_text())
+    data["groups"]["user"]["entries"] = ["tracked"]
+    config_path.write_text(tomli_w.dumps(data))
+
+    result = runner.invoke(app, ["orphan", "--config", str(config_path), "--prune", "--yes"])
+    assert result.exit_code == 0
+    assert "Pruned 1 orphaned entries" in result.stdout
+
+    managed_orphan = managed / "user" / "orphan"
+    assert not managed_orphan.exists()
+    manifest_obj = Manifest.load(manifest)
+    assert manifest_obj.get("user", Path("orphan")) is None
+    assert manifest_obj.get("user", Path("tracked")) is not None
+
+
+def test_cli_apply_conflict_choose_system(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    base = project / "base"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+    base.mkdir(parents=True)
+    managed.mkdir(parents=True)
+
+    source_file = base / "config.txt"
+    source_file.write_text("v1\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base}"
+entries = ["config.txt"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+
+    config_path = _write_config(project, config_body)
+    runner.invoke(app, ["apply", "--config", str(config_path)])
+
+    managed_file = managed / "user" / "config.txt"
+    managed_file.write_text("managed-change\n")
+
+    source_file.unlink()
+    source_file.write_text("system-change\n")
+
+    result = runner.invoke(app, ["apply", "--config", str(config_path)], input="s\n")
+    assert result.exit_code == 0
+    assert "system_preferred" in result.stdout
+    assert managed_file.read_text() == "system-change\n"
+    assert source_file.is_symlink()
+    assert source_file.resolve() == managed_file
+
+
+def test_cli_apply_conflict_choose_managed(tmp_path: Path, fake_home: Path) -> None:
+    project = tmp_path / "project"
+    base = project / "base"
+    managed = project / "managed"
+    manifest = managed / "manifest.toml"
+    base.mkdir(parents=True)
+    managed.mkdir(parents=True)
+
+    source_file = base / "config.txt"
+    source_file.write_text("v1\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base}"
+entries = ["config.txt"]
+
+[settings]
+managed_root = "{managed}"
+manifest_path = "{manifest}"
+"""
+
+    config_path = _write_config(project, config_body)
+    runner.invoke(app, ["apply", "--config", str(config_path)])
+
+    managed_file = managed / "user" / "config.txt"
+    managed_file.write_text("managed-change\n")
+
+    source_file.unlink()
+    source_file.write_text("system-change\n")
+
+    result = runner.invoke(app, ["apply", "--config", str(config_path)], input="m\n")
+    assert result.exit_code == 0
+    assert "managed_kept" in result.stdout
+    assert managed_file.read_text() == "managed-change\n"
+    assert source_file.is_symlink()
+    assert source_file.resolve() == managed_file
+
+
 def test_cli_doctor_permission_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
     class DummyManager:
         def status(self, *_args, **_kwargs):  # noqa: ANN001
@@ -235,6 +538,7 @@ def test_cli_doctor_permission_warnings(monkeypatch: pytest.MonkeyPatch) -> None
     assert result.exit_code == 1
     assert "Permission preflight warnings" in result.stdout
     assert "Cannot write to /etc" in result.stdout
+    assert "Warning: configuration directory is not inside a Git repository" in result.stdout
 
 
 def test_build_discovery_missing_path(tmp_path: Path) -> None:

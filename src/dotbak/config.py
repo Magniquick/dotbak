@@ -10,6 +10,14 @@ from typing import Any, Dict, Mapping
 from pydantic import BaseModel, ConfigDict, Field
 
 DEFAULT_CONFIG_FILENAME = "dotbak.toml"
+DEFAULT_CONFIG_DIR = Path(os.environ.get("DOTBAK_CONFIG_DIR", "~/.local/share/dotbak")).expanduser()
+DEFAULT_CONFIG_PATH = Path(
+    os.environ.get("DOTBAK_CONFIG_PATH", str(DEFAULT_CONFIG_DIR / DEFAULT_CONFIG_FILENAME))
+).expanduser()
+
+
+def detect_default_config_path() -> Path:
+    return DEFAULT_CONFIG_PATH
 
 
 class ConfigError(RuntimeError):
@@ -160,7 +168,7 @@ def load_config(path: Path | None = None) -> Config:
 
 def _resolve_config_path(path: Path | None) -> Path:
     if path is None:
-        path = Path.cwd() / DEFAULT_CONFIG_FILENAME
+        path = detect_default_config_path()
     else:
         path = Path(path)
 

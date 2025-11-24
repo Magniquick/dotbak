@@ -40,6 +40,16 @@ class ManifestEntry:
     uid: int | None = None
     gid: int | None = None
 
+    def managed_path(self, root: Path, style: str | None) -> Path:
+        group_dir = root / self.path.group
+        parts: list[str] = []
+        for part in self.path.relative_path.parts:
+            if style == "underscore" and part.startswith(".") and len(part) > 1:
+                parts.append(f"dot_{part[1:]}")
+            else:
+                parts.append(part)
+        return group_dir / Path(*parts)
+
 
 class ApplyAction(str, Enum):
     """Outcome of an apply operation for an entry."""
@@ -47,6 +57,8 @@ class ApplyAction(str, Enum):
     COPIED = "copied"
     UPDATED = "updated"
     SKIPPED = "skipped"
+    CONFLICT_SYSTEM = "system_preferred"
+    CONFLICT_MANAGED = "managed_kept"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +87,27 @@ class RestoreResult:
     managed: Path
     action: RestoreAction
     details: str | None = None
+
+
+class ApplyResolution(str, Enum):
+    """User preference for resolving an apply conflict."""
+
+    USE_SYSTEM = "use_system"
+    USE_MANAGED = "use_managed"
+    ABORT = "abort"
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyConflict:
+    """Describe a divergence between managed and source copies."""
+
+    group: str
+    entry: Path
+    source_path: Path
+    managed_path: Path
+    manifest_digest: str
+    source_digest: str
+    managed_digest: str
 
 
 @dataclass(frozen=True, slots=True)

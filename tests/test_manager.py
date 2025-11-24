@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
+from git import Repo
 
 from dotbak.config import DEFAULT_CONFIG_FILENAME, load_config
 from dotbak.manager import DotbakError, DotbakManager
@@ -419,6 +420,47 @@ manifest_path = "{manifest_path}"
 
     report = manager.status()
     assert report.entries[0].state is StatusState.CONTENT_DIFFER
+
+
+def test_status_content_differs_git_dirty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_dir, base_dir, managed_dir, manifest_path = _setup_config(tmp_path)
+    source_file = base_dir / "file"
+    source_file.write_text("data\n")
+
+    config_body = f"""
+[groups.user]
+base = "{base_dir}"
+entries = ["file"]
+
+[settings]
+managed_root = "{managed_dir}"
+manifest_path = "{manifest_path}"
+"""
+
+    config_path = _write_config(project_dir, config_body)
+
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    repo = Repo.init(project_dir)
+    with repo.config_writer() as writer:
+        writer.set_value("user", "email", "test@example.com")
+        writer.set_value("user", "name", "Test User")
+
+    manager = DotbakManager(load_config(config_path))
+    manager.apply()
+
+    repo.git.add(all=True)
+    repo.index.commit("initial")
+
+    managed_file = managed_dir / "user" / "file"
+    managed_file.write_text("dirty\n")
+
+    report = manager.status()
+    entry = report.entries[0]
+    assert entry.state is StatusState.CONTENT_DIFFER
+    assert entry.details is not None and "Git" in entry.details
 
 
 def test_status_source_missing(tmp_path: Path) -> None:

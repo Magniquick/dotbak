@@ -1,10 +1,11 @@
 [project]
 name = "dotbak"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "gitpython>=3.1.45",
     "pydantic>=2.12.3",
     "tomli-w>=1.2.0",
     "typer>=0.20.0",

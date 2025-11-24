@@ -5,18 +5,29 @@ from __future__ import annotations
 import io
 import os
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import tomli_w
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from .config import DEFAULT_CONFIG_FILENAME, ConfigError, load_config
+from .config import DEFAULT_CONFIG_FILENAME, DEFAULT_CONFIG_PATH, Config, ConfigError, GroupConfig, load_config
 from .manager import DotbakError, DotbakManager
-from .models import ApplyResult, ManagedPath, RestoreResult, StatusEntry, StatusReport, StatusState
+from .models import (
+    ApplyConflict,
+    ApplyResolution,
+    ApplyResult,
+    ManagedPath,
+    RestoreAction,
+    RestoreResult,
+    StatusEntry,
+    StatusReport,
+    StatusState,
+)
 
 app = typer.Typer(help="Metadata-preserving dotfiles backup manager")
 console = Console()
@@ -28,6 +39,9 @@ def _load_manager(config: Path | None) -> DotbakManager:
 
 
 def _handle_error(exc: Exception) -> None:
+    from .config import ConfigError
+    from .manager import DotbakError
+
     if isinstance(exc, PermissionError):
         console.print("[red]Permission denied.[/red] Re-run the command with elevated privileges (e.g. `sudo`).")
         raise typer.Exit(code=1)
@@ -285,10 +299,88 @@ def _bootstrap_managed_dirs(config_dir: Path, managed_root: str, discovered: lis
         console.print(f"[green]Ensured managed directory '{group_dir}'.[/green]")
 
 
+def _load_config_data(config_path: Path) -> dict:
+    with config_path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def _config_header_block(config_path: Path) -> str:
+    text = config_path.read_text()
+    lines = text.splitlines(keepends=True)
+    prefix: list[str] = []
+    encountered_comment = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            prefix.append(line)
+            encountered_comment = True
+            continue
+        if stripped == "" and encountered_comment:
+            prefix.append(line)
+            continue
+        break
+
+    return "".join(prefix)
+
+
+def _resolve_target_path(raw: Path | str) -> Path:
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    if candidate.exists() and candidate.is_symlink():
+        return candidate.absolute()
+    return candidate.resolve(strict=False)
+
+
+def _prompt_apply_conflict(conflict: ApplyConflict) -> ApplyResolution:
+    console.print("[yellow]Merge conflict detected during apply:[/yellow]")
+    console.print(f"  Group : {conflict.group}")
+    console.print(f"  Entry : {conflict.entry.as_posix()}")
+    console.print(f"  Source : {conflict.source_path}")
+    console.print(f"  Managed: {conflict.managed_path}")
+    console.print("Choose how to proceed: [s]ystem (use current system copy), [m]anaged (keep managed copy), [a]bort")
+
+    while True:
+        choice = typer.prompt("Resolution", default="s").strip().lower()
+        if choice in {"s", "system"}:
+            return ApplyResolution.USE_SYSTEM
+        if choice in {"m", "managed"}:
+            return ApplyResolution.USE_MANAGED
+        if choice in {"a", "abort"}:
+            return ApplyResolution.ABORT
+        console.print("[red]Invalid choice. Enter 's', 'm', or 'a'.[/red]")
+
+
+def _matching_groups(config: Config, target: Path) -> list[GroupConfig]:
+    resolved = _resolve_target_path(target)
+
+    matches: list[GroupConfig] = []
+    for group in config.groups.values():
+        try:
+            resolved.relative_to(group.base_path)
+        except ValueError:
+            continue
+        matches.append(group)
+    return matches
+
+
+def _pick_group(candidates: Sequence[GroupConfig], target: Path) -> GroupConfig:
+    console.print(f"[yellow]Multiple groups match '{target}':[/yellow]")
+    for index, group in enumerate(candidates, start=1):
+        console.print(f"  {index}. {group.name} (base: {group.base_path})")
+
+    while True:
+        selection = typer.prompt("Select group", type=int, default=1)
+        if 1 <= selection <= len(candidates):
+            return candidates[selection - 1]
+        console.print(f"[red]Invalid selection '{selection}'. Choose between 1 and {len(candidates)}.[/red]")
+
+
 @app.command()
 def init(
     config: Path = typer.Option(
-        Path(DEFAULT_CONFIG_FILENAME),
+        DEFAULT_CONFIG_PATH,
         "--config",
         "-c",
         help="Path to write the configuration file",
@@ -350,6 +442,235 @@ def init(
 
 
 @app.command()
+def add(
+    paths: list[str] = typer.Argument(..., help="Source files or directories to start managing"),
+    config: Path | None = typer.Option(None, "--config", "-c", help="Path to dotbak.toml"),
+) -> None:
+    """Register new entries in the configuration file."""
+
+    try:
+        config_obj = load_config(config)
+        raw_data = _load_config_data(config_obj.config_path)
+        groups_table = raw_data.get("groups")
+        if not isinstance(groups_table, dict):
+            raise ConfigError("Configuration is missing a [groups] table")
+
+        additions: list[tuple[str, str, Path]] = []
+        errors: list[str] = []
+
+        for raw in paths:
+            resolved = _resolve_target_path(raw)
+            matches = _matching_groups(config_obj, resolved)
+            if not matches:
+                errors.append(f"No configured group base covers '{resolved}'.")
+                continue
+
+            max_specificity = max(len(group.base_path.parts) for group in matches)
+            candidates = [group for group in matches if len(group.base_path.parts) == max_specificity]
+            chosen = candidates[0] if len(candidates) == 1 else _pick_group(candidates, resolved)
+
+            try:
+                relative = resolved.relative_to(chosen.base_path)
+            except ValueError:
+                errors.append(f"Path '{resolved}' is not inside base '{chosen.base_path}'.")
+                continue
+
+            if str(relative) in {".", ""}:
+                errors.append(
+                    f"Path '{resolved}' refers to the group base '{chosen.base_path}'. Choose a child entry instead."
+                )
+                continue
+
+            entry_text = relative.as_posix()
+
+            group_section = groups_table.get(chosen.name)
+            if not isinstance(group_section, dict):
+                errors.append(f"Group '{chosen.name}' is missing from configuration data.")
+                continue
+
+            entries = list(group_section.get("entries") or [])
+            if entry_text in entries:
+                console.print(
+                    f"[yellow]Entry '{entry_text}' is already tracked in group '{chosen.name}'. Skipping.[/yellow]"
+                )
+                continue
+
+            entries.append(entry_text)
+            entries.sort()
+            group_section["entries"] = entries
+            additions.append((chosen.name, entry_text, resolved))
+
+        if additions:
+            header = _config_header_block(config_obj.config_path)
+            serialized = tomli_w.dumps(raw_data)
+            new_body = f"{header}{serialized}" if header else serialized
+            config_obj.config_path.write_text(new_body)
+            for group_name, entry_text, resolved in additions:
+                console.print(f"[green]Added '{resolved}' as '{entry_text}' in group '{group_name}'.[/green]")
+
+        if errors:
+            for message in errors:
+                console.print(f"[red]{message}[/red]")
+            raise typer.Exit(code=1 if not additions else 0)
+
+        if not additions and not errors:
+            console.print("[yellow]No changes were made to the configuration.[/yellow]")
+
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+
+@app.command()
+def remove(
+    paths: list[str] = typer.Argument(..., help="Managed paths to stop tracking"),
+    config: Path | None = typer.Option(None, "--config", "-c", help="Path to dotbak.toml"),
+    force: bool = typer.Option(False, "--force", help="Skip writable checks when restoring"),
+) -> None:
+    """Remove entries from the configuration and restore real files from managed copies."""
+
+    try:
+        manager = _load_manager(config)
+        config_obj = manager.config
+        raw_data = _load_config_data(config_obj.config_path)
+        groups_table = raw_data.get("groups")
+        if not isinstance(groups_table, dict):
+            raise ConfigError("Configuration is missing a [groups] table")
+
+        removals: list[tuple[str, str, Path]] = []
+        errors: list[str] = []
+        removal_requests: list[tuple[GroupConfig, Path]] = []
+        removal_details: list[tuple[str, str, Path]] = []
+
+        for raw in paths:
+            resolved = _resolve_target_path(raw)
+            matches = _matching_groups(config_obj, resolved)
+            if not matches:
+                errors.append(f"No configured group base covers '{resolved}'.")
+                continue
+
+            max_specificity = max(len(group.base_path.parts) for group in matches)
+            candidates = [group for group in matches if len(group.base_path.parts) == max_specificity]
+            chosen = candidates[0] if len(candidates) == 1 else _pick_group(candidates, resolved)
+
+            try:
+                relative = resolved.relative_to(chosen.base_path)
+            except ValueError:
+                errors.append(f"Path '{resolved}' is not inside base '{chosen.base_path}'.")
+                continue
+
+            entry_text = relative.as_posix()
+            group_section = groups_table.get(chosen.name)
+            if not isinstance(group_section, dict):
+                errors.append(f"Group '{chosen.name}' is missing from configuration data.")
+                continue
+
+            entries = list(group_section.get("entries") or [])
+            if entry_text not in entries:
+                console.print(
+                    f"[yellow]Entry '{entry_text}' is not tracked in group '{chosen.name}'. Skipping.[/yellow]"
+                )
+                continue
+
+            entry_path = Path(entry_text)
+            group_cfg = manager.config.group(chosen.name)
+            removal_requests.append((group_cfg, entry_path))
+            removal_details.append((chosen.name, entry_text, resolved))
+
+            entries.remove(entry_text)
+            if entries:
+                group_section["entries"] = entries
+            else:
+                groups_table.pop(chosen.name, None)
+                paths_table = raw_data.get("paths")
+                if isinstance(paths_table, dict):
+                    paths_table.pop(chosen.name, None)
+
+        results = manager.remove_entries(removal_requests, force=force)
+        for (group_name, entry_text, resolved), restore_result in zip(removal_details, results, strict=False):
+            if restore_result.action is not RestoreAction.RESTORED:
+                console.print(
+                    f"[yellow]Restore for '{entry_text}' in group '{group_name}' reported '{restore_result.action.value}'.[/yellow]"
+                )
+            removals.append((group_name, entry_text, resolved))
+
+        for message in manager.pull_warnings():
+            console.print(f"[yellow]Warning:[/yellow] {message}")
+
+        if removals:
+            if groups_table:
+                header = _config_header_block(config_obj.config_path)
+                serialized = tomli_w.dumps(raw_data)
+                new_body = f"{header}{serialized}" if header else serialized
+                config_obj.config_path.write_text(new_body)
+            else:
+                config_obj.config_path.unlink(missing_ok=True)
+                console.print(
+                    "[yellow]All groups removed; configuration file deleted because no entries remain.[/yellow]"
+                )
+
+            for group_name, entry_text, resolved in removals:
+                console.print(f"[green]Removed '{resolved}' (entry '{entry_text}') from group '{group_name}'.[/green]")
+
+        if errors:
+            for message in errors:
+                console.print(f"[red]{message}[/red]")
+            raise typer.Exit(code=1 if not removals else 0)
+
+        if not removals and not errors:
+            console.print("[yellow]No changes were made to the configuration.[/yellow]")
+
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+
+@app.command()
+def orphan(
+    config: Path | None = typer.Option(None, "--config", "-c", help="Path to dotbak.toml"),
+    prune: bool = typer.Option(False, "--prune", help="Delete managed copies and manifest entries"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt for confirmation when pruning"),
+) -> None:
+    """Inspect or prune manifest entries that no longer appear in the config."""
+
+    try:
+        manager = _load_manager(config)
+        orphans = manager.list_orphans()
+        if not orphans:
+            console.print("[green]No orphaned manifest entries found.[/green]")
+            return
+
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Group")
+        table.add_column("Entry")
+        table.add_column("Managed Path", overflow="fold")
+
+        root = manager.config.settings.managed_root
+        style = manager.config.settings.dot_prefix_style
+        for entry in orphans:
+            table.add_row(
+                entry.path.group,
+                entry.path.relative_path.as_posix(),
+                entry.managed_path(root, style).as_posix(),
+            )
+
+        console.print(table)
+
+        if not prune:
+            console.print(
+                "[yellow]Use 'dotbak orphan --prune' to remove these managed copies if they are no longer needed.[/yellow]"
+            )
+            raise typer.Exit(code=1)
+
+        if not yes and not typer.confirm("Prune the listed orphaned entries?", default=False):
+            console.print("[yellow]Aborted without pruning orphans.[/yellow]")
+            raise typer.Exit(code=1)
+
+        pruned = manager.prune_orphans()
+        console.print(f"[green]Pruned {len(pruned)} orphaned entries.[/green]")
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+
+@app.command()
 def apply(
     config: Path | None = typer.Option(None, "--config", "-c", help="Path to dotbak.toml"),
     group: list[str] = typer.Option(None, "--group", "-g", help="Limit to specific group(s)"),
@@ -363,7 +684,7 @@ def apply(
 
     try:
         manager = _load_manager(config)
-        results = manager.apply(group or None, force=force)
+        results = manager.apply(group or None, force=force, resolver=_prompt_apply_conflict)
         _format_apply_results(results)
         for message in manager.pull_warnings():
             console.print(f"[yellow]Warning:[/yellow] {message}")
@@ -426,6 +747,11 @@ def doctor(
 
     try:
         manager = _load_manager(config)
+        git_root = getattr(manager, "git_root", None)
+        if git_root is None:
+            console.print(
+                "[yellow]Warning: configuration directory is not inside a Git repository; dotbak will fall back to file hashes for drift detection.[/yellow]"
+            )
         report = manager.status(group or None)
         _format_status(report)
         has_issues = any(entry.state is not StatusState.IN_SYNC for entry in report.entries)

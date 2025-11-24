@@ -6,7 +6,9 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
+
+from git import InvalidGitRepositoryError, NoSuchPathError, Repo
 
 from .config import Config, GroupConfig
 from .filesystem import (
@@ -22,6 +24,8 @@ from .filesystem import (
 from .manifest import Manifest
 from .models import (
     ApplyAction,
+    ApplyConflict,
+    ApplyResolution,
     ApplyResult,
     EntryType,
     ManagedPath,
@@ -46,8 +50,15 @@ class DotbakManager:
         self.manifest = Manifest.load(config.settings.manifest_path)
         self.config.settings.managed_root.mkdir(parents=True, exist_ok=True)
         self._warnings: list[str] = []
+        self._git_repo = self._load_git_repo()
 
-    def apply(self, groups: Iterable[str] | None = None, *, force: bool = False) -> list[ApplyResult]:
+    def apply(
+        self,
+        groups: Iterable[str] | None = None,
+        *,
+        force: bool = False,
+        resolver: callable[[ApplyConflict], ApplyResolution] | None = None,
+    ) -> list[ApplyResult]:
         selected = self._select_groups(groups)
         results: list[ApplyResult] = []
         self._warnings.clear()
@@ -57,7 +68,7 @@ class DotbakManager:
                 source = group.source_path(entry)
                 if not force:
                     self._ensure_writable(source, create_missing=True)
-                results.append(self._apply_entry(group, entry))
+                results.append(self._apply_entry(group, entry, resolver=resolver))
 
         self.manifest.save()
         return results
@@ -85,6 +96,52 @@ class DotbakManager:
 
         entries.sort(key=lambda item: item.path.key())
         return StatusReport(entries=tuple(entries))
+
+    def list_orphans(self) -> list[ManifestEntry]:
+        active_keys: set[tuple[str, str]] = {
+            ManagedPath(group.name, entry).key() for group in self.config.groups.values() for entry in group.entries
+        }
+
+        orphans: list[ManifestEntry] = []
+        for key, manifest_entry in self.manifest.items():
+            if key not in active_keys:
+                orphans.append(manifest_entry)
+        return orphans
+
+    def prune_orphans(self) -> list[ManifestEntry]:
+        orphans = self.list_orphans()
+        for entry in orphans:
+            managed_path = entry.managed_path(self.config.settings.managed_root, self.config.settings.dot_prefix_style)
+            remove_path(managed_path)
+            self.manifest.remove(entry)
+        if orphans:
+            self.manifest.save()
+        return orphans
+
+    def remove_entries(
+        self,
+        entries: Iterable[tuple[GroupConfig, Path]],
+        *,
+        force: bool = False,
+    ) -> list[RestoreResult]:
+        results: list[RestoreResult] = []
+        for group, entry in entries:
+            source = group.source_path(entry)
+            if not force:
+                self._ensure_writable(source, create_missing=True)
+            result = self._restore_entry(group, entry, forget=True)
+            if result.action is RestoreAction.SKIPPED:
+                managed_path = group.destination_path(
+                    self.config.settings.managed_root,
+                    entry,
+                    dot_prefix_style=self.config.settings.dot_prefix_style,
+                )
+                remove_path(managed_path)
+                self.manifest.remove(ManagedPath(group.name, entry))
+            results.append(result)
+        if results:
+            self.manifest.save()
+        return results
 
     def permission_issues(self, groups: Iterable[str] | None = None) -> list[tuple[ManagedPath, str]]:
         self._warnings.clear()
@@ -135,6 +192,14 @@ class DotbakManager:
         self._warnings.clear()
         return messages
 
+    @property
+    def git_root(self) -> Path | None:
+        """Return the detected Git repository root, if any."""
+
+        if self._git_repo is None or self._git_repo.working_tree_dir is None:
+            return None
+        return Path(self._git_repo.working_tree_dir)
+
     # ------------------------------------------------------------------
     # Internal helpers
 
@@ -149,7 +214,13 @@ class DotbakManager:
             selected.append(self.config.groups[name])
         return selected
 
-    def _apply_entry(self, group: GroupConfig, entry: Path) -> ApplyResult:
+    def _apply_entry(
+        self,
+        group: GroupConfig,
+        entry: Path,
+        *,
+        resolver: Callable[[ApplyConflict], ApplyResolution] | None = None,
+    ) -> ApplyResult:
         source = group.source_path(entry)
         if not source.exists() and not source.is_symlink():
             raise DotbakError(f"Source path '{source}' does not exist")
@@ -182,19 +253,41 @@ class DotbakManager:
 
             if existing_entry and managed_exists:
                 managed_digest = hash_path(managed)
-                if managed_digest == digest == existing_entry.digest:
+                manifest_digest = existing_entry.digest
+                if managed_digest == digest == manifest_digest:
                     need_copy = False
                     action = ApplyAction.SKIPPED
                 else:
-                    action = ApplyAction.UPDATED
+                    managed_changed = managed_digest != manifest_digest
+                    source_changed = digest != manifest_digest
+                    if managed_changed and source_changed and managed_digest != digest:
+                        (
+                            action,
+                            entry_type,
+                            metadata_path,
+                            need_copy,
+                            digest_override,
+                        ) = self._resolve_apply_conflict(
+                            group,
+                            entry,
+                            source,
+                            managed,
+                            manifest_digest,
+                            digest,
+                            managed_digest,
+                            resolver,
+                        )
+                        if digest_override is not None:
+                            digest = digest_override
+                    else:
+                        action = ApplyAction.UPDATED
             else:
                 action = ApplyAction.COPIED if existing_entry is None else ApplyAction.UPDATED
 
             if need_copy:
                 entry_type = copy_entry(source, managed)
                 digest = hash_path(managed)
-
-            metadata_path = source
+                metadata_path = source
 
         metadata = collect_metadata(metadata_path, entry_type=entry_type)
         manifest_entry = ManifestEntry(
@@ -243,13 +336,22 @@ class DotbakManager:
                 details="Managed copy is missing",
             )
 
-        managed_digest = hash_path(managed)
-        if managed_digest != manifest_entry.digest:
+        git_clean, git_details = self._git_state(managed)
+        if git_clean is False:
             return StatusEntry(
                 path=managed_path,
                 state=StatusState.CONTENT_DIFFER,
-                details="Managed copy differs from manifest",
+                details=git_details or "Managed copy has uncommitted Git changes",
             )
+
+        if git_clean is None:
+            managed_digest = hash_path(managed)
+            if managed_digest != manifest_entry.digest:
+                return StatusEntry(
+                    path=managed_path,
+                    state=StatusState.CONTENT_DIFFER,
+                    details="Managed copy differs from manifest",
+                )
 
         if not source.exists() and not source.is_symlink():
             return StatusEntry(
@@ -470,3 +572,126 @@ class DotbakManager:
 
     def _warn_symlink_shadow(self, path: Path, target: Path) -> None:
         self._warnings.append(f"shadowing existing symlink '{path}' pointing to '{target}'. dotbak will manage a copy.")
+
+    def _load_git_repo(self) -> Repo | None:
+        config_dir = self.config.config_path.parent
+        try:
+            repo = Repo(config_dir, search_parent_directories=True)
+        except (InvalidGitRepositoryError, NoSuchPathError):
+            return None
+
+        if repo.working_tree_dir is None:
+            return None
+        repo.git.update_environment(
+            GIT_CONFIG_GLOBAL=os.environ.get("DOTBAK_GIT_CONFIG_GLOBAL", "/dev/null"),
+            GIT_CONFIG_SYSTEM=os.environ.get("DOTBAK_GIT_CONFIG_SYSTEM", "/dev/null"),
+            GIT_CONFIG_NOSYSTEM=os.environ.get("DOTBAK_GIT_CONFIG_NOSYSTEM", "1"),
+        )
+        return repo
+
+    def _git_state(self, managed_path: Path) -> tuple[bool | None, str | None]:
+        repo = self._git_repo
+        if repo is None or repo.working_tree_dir is None:
+            return (None, "Git repository not detected")
+
+        resolved = managed_path.resolve(strict=False)
+        root_path = Path(repo.working_tree_dir)
+
+        try:
+            relative = resolved.relative_to(root_path)
+        except ValueError:
+            return (None, "Managed copy lies outside the Git repository")
+
+        rel_posix = relative.as_posix()
+        try:
+            status_output = repo.git.status("--porcelain", "--ignored=no", "--", rel_posix)
+        except Exception:
+            return (None, "Unable to determine Git status for managed copy")
+
+        lines = [line for line in status_output.splitlines() if line]
+        if not lines:
+            return (True, None)
+
+        detail = self._summarise_git_output(lines)
+        return (False, detail)
+
+    def _summarise_git_output(self, lines: Sequence[str]) -> str:
+        if not lines:
+            return "Managed copy has uncommitted Git changes"
+
+        categories: set[str] = set()
+        for line in lines:
+            code = line[:2]
+            if code == "??":
+                categories.add("untracked items")
+            else:
+                staged, workspace = code[0], code[1]
+                if staged == "A" or workspace == "A":
+                    categories.add("added changes")
+                if staged == "M" or workspace == "M":
+                    categories.add("modified changes")
+                if staged == "D" or workspace == "D":
+                    categories.add("deleted changes")
+                if staged == "R" or workspace == "R":
+                    categories.add("renamed entries")
+
+        summary = ", ".join(sorted(categories)) if categories else "uncommitted changes"
+        preview_items: list[str] = []
+        for entry in lines[:3]:
+            preview_items.append(entry[3:])
+        preview = ", ".join(preview_items)
+        if len(lines) > 3:
+            preview = f"{preview}, …" if preview else "…"
+
+        detail = f"Managed copy has {summary} in Git"
+        if preview:
+            detail += f" [{preview}]"
+        return detail
+
+    def _resolve_apply_conflict(
+        self,
+        group: GroupConfig,
+        entry: Path,
+        source: Path,
+        managed: Path,
+        manifest_digest: str,
+        source_digest: str,
+        managed_digest: str,
+        resolver: Callable[[ApplyConflict], ApplyResolution] | None,
+    ) -> tuple[ApplyAction, EntryType, Path, bool, str | None]:
+        conflict = ApplyConflict(
+            group=group.name,
+            entry=entry,
+            source_path=source,
+            managed_path=managed,
+            manifest_digest=manifest_digest,
+            source_digest=source_digest,
+            managed_digest=managed_digest,
+        )
+
+        if resolver is None:
+            raise DotbakError(
+                f"Detected conflict for '{source}'. Run 'dotbak apply' interactively to resolve managed vs system changes."
+            )
+
+        resolution = resolver(conflict)
+
+        if resolution is ApplyResolution.ABORT:
+            raise DotbakError("Apply aborted by user during conflict resolution.")
+
+        if resolution is ApplyResolution.USE_SYSTEM:
+            return (
+                ApplyAction.CONFLICT_SYSTEM,
+                detect_entry_type(source),
+                source,
+                True,
+                None,
+            )
+
+        return (
+            ApplyAction.CONFLICT_MANAGED,
+            detect_entry_type(managed),
+            managed,
+            False,
+            managed_digest,
+        )
